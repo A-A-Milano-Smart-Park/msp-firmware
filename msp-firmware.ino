@@ -9,7 +9,12 @@
 #include <SD.h>
 #include <Wire.h>
 
+#ifdef VERSION_STRING
+String ver = VERSION_STRING;
+#else
 String ver = "2.5beta"; //current firmware version
+#endif
+
 
 //++++++++++++++++++++++ DEBUG enable ++++++++++++++++++++++++++++++++
 bool DEBDUG = false;
