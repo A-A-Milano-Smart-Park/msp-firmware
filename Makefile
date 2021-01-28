@@ -141,7 +141,7 @@ clean:
 	--build-path $(BUILDDIR) --build-cache-path $(CACHEDIR) \
 	--build-property $(BUILDPROP) \
 	--warnings all --log-file $(LOGDIR)/build.log --log-level debug --verbose \
-	--fqbn $(FQBN) $(SRCDIR)
+	--fqbn $(FQBN) $(SRCDIR) \
 	--clean
 
 clean-all:
