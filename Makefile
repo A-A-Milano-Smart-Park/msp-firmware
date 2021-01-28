@@ -136,10 +136,15 @@ upload: build
 	--log-file $(LOGDIR)/upload.log --log-level debug --verbose \
 	--port $(PORT) --fqbn $(FQBN) --input-file $(BUILDDIR)/$(SKETCH).ino.hex
 
-clean :
-	git clean -dXf
+clean:
+	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml compile \
+	--build-path $(BUILDDIR) --build-cache-path $(CACHEDIR) \
+	--build-property $(BUILDPROP) \
+	--warnings all --log-file $(LOGDIR)/build.log --log-level debug --verbose \
+	--fqbn $(FQBN) $(SRCDIR)
+	--clean
 
-clean-all :
+clean-all:
 	git clean -dxf
 
 ################################################################################
