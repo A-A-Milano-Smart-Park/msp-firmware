@@ -855,7 +855,9 @@ void loop() {
       // Sending client requests
 
       client.print("POST /api/channels/writelog HTTP/1.1\r\n");
-      client.print("Host: api.milanosmartpark.net\r\n");
+      client.print("Host: ");
+      client.print(server);
+      client.print("\r\n");
       client.print("Authorization: Bearer ");
       client.print(api_secret_salt);
       client.print("\r\n");
