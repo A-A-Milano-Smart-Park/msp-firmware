@@ -842,6 +842,8 @@ void loop() {
       postStr += dayStamp;
       postStr += "&ora=";
       postStr += timeStamp;
+      postStr += "&recordedAt=";
+      postStr += String(time(NULL));
 
       if (DEBDUG) Serial.println("POST STRING: " + postStr + "\n");
 
