@@ -50,7 +50,7 @@ String api_secret_salt = "secret_salt";
 #endif
 
 // Server name for data upload
-const char server[] = "api.milanosmartpark.net";
+const char server[] = "fcub.fluidware.it";
 
 // Analog pin 32 (Ozone sensor data) to get semi-random data from for SSL
 // Pick a pin that's not connected or attached to a randomish voltage source
@@ -854,7 +854,7 @@ void loop() {
 
       // Sending client requests
 
-      client.print("POST /api/channels/writelog HTTP/1.1\r\n");
+      client.print("POST /api/v1/records HTTP/1.1\r\n");
       client.print("Host: ");
       client.print(server);
       client.print("\r\n");
