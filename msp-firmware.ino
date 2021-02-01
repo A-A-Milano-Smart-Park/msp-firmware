@@ -43,6 +43,11 @@ bool DEBDUG = false;
 #define I2C_SDA_PIN 21
 #define I2C_SCL_PIN 22
 
+#ifdef API_SECRET_SALT
+String api_secret_salt = API_SECRET_SALT;
+#else
+String api_secret_salt = "secret_salt";
+#endif
 
 // Server name for data upload
 const char server[] = "api.milanosmartpark.net";
@@ -851,6 +856,9 @@ void loop() {
 
       client.print("POST /api/channels/writelog HTTP/1.1\r\n");
       client.print("Host: api.milanosmartpark.net\r\n");
+      client.print("Authorization: Bearer ");
+      client.print(api_secret_salt);
+      client.print("\r\n");
       client.print("Connection: close\r\n");
       client.print("User-Agent: MilanoSmartPark\r\n");
       client.print("Content-Type: application/x-www-form-urlencoded\r\n");
