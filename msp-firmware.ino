@@ -810,6 +810,7 @@ void loop() {
       // Building the post string:
 
       String postStr = "apikey=" + codice;
+      String postLine = "";
 
       if (BME_run) {
         postStr += "&temp=";
@@ -855,12 +856,10 @@ void loop() {
       // Sending client requests
 
       client.print("POST /api/v1/records HTTP/1.1\r\n");
-      client.print("Host: ");
-      client.print(server);
-      client.print("\r\n");
-      client.print("Authorization: Bearer ");
-      client.print(api_secret_salt);
-      client.print("\r\n");
+      postLine = "Host: " + String(server) + "\r\n";
+      client.print(postLine);
+      postLine = "Authorization: Bearer " + api_secret_salt + ":" + codice + "\r\n";
+      client.print(postLine);
       client.print("Connection: close\r\n");
       client.print("User-Agent: MilanoSmartPark\r\n");
       client.print("Content-Type: application/x-www-form-urlencoded\r\n");
