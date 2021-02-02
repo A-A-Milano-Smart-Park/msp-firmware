@@ -40,6 +40,10 @@ SRCS := $(shell find $(SRCDIR) -name "*.ino" -or -name "*.cpp" -or -name "*.c" -
 # Compute version string from git sandbox status
 VERSION_STRING := $(shell git describe --tags --dirty)
 
+ifdef API_SECRET_SALT
+CPP_EXTRA_FLAGS := -DAPI_SECRET_SALT="$(API_SECRET_SALT)"
+endif
+
 # Set the location of the Arduino environment.
 export ARDUINO_DATA_DIR = $(VARDIR)
 
@@ -119,7 +123,7 @@ properties:
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml compile \
 	--build-path $(BUILDDIR) --build-cache-path $(CACHEDIR) \
 	--build-property $(BUILDPROP) \
-	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)"' \
+	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)" $(CPP_EXTRA_FLAGS)' \
 	--warnings all --log-file $(LOGDIR)/build.log --log-level debug $(ARGS_VERBOSE) \
 	--fqbn $(FQBN) $(SRCDIR) --show-properties
 
@@ -130,7 +134,7 @@ $(BUILDDIR)/$(SKETCH).ino.elf: $(SRCS)
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml compile \
 	--build-path $(BUILDDIR) --build-cache-path $(CACHEDIR) \
 	--build-property $(BUILDPROP) \
-	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)"' \
+	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)" $(CPP_EXTRA_FLAGS)' \
 	--warnings all --log-file $(LOGDIR)/build.log --log-level debug $(ARGS_VERBOSE) \
 	--fqbn $(FQBN) $(SRCDIR)
 
