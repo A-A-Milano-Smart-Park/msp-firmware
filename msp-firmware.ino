@@ -855,17 +855,17 @@ void loop() {
 
       // Sending client requests
 
-      client.print("POST /api/v1/records HTTP/1.1\r\n");
-      postLine = "Host: " + String(server) + "\r\n";
-      client.print(postLine);
-      postLine = "Authorization: Bearer " + api_secret_salt + ":" + codice + "\r\n";
-      client.print(postLine);
-      client.print("Connection: close\r\n");
-      client.print("User-Agent: MilanoSmartPark\r\n");
-      client.print("Content-Type: application/x-www-form-urlencoded\r\n");
-      client.print("Content-Length: ");
-      client.print(postStr.length());
-      client.print("\r\n\r\n");
+      client.println("POST /api/v1/records HTTP/1.1");
+      postLine = "Host: " + String(server);
+      client.println(postLine);
+      postLine = "Authorization: Bearer " + api_secret_salt + ":" + codice;
+      client.println(postLine);
+      client.println("Connection: close");
+      client.println("User-Agent: MilanoSmartPark");
+      client.println("Content-Type: application/x-www-form-urlencoded");
+      postLine = "Content-Length: " + String(postStr.length());
+      client.println(postLine);
+      client.println();
       client.print(postStr);
       client.flush();
 
