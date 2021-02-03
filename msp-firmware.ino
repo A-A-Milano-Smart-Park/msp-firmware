@@ -809,7 +809,7 @@ void loop() {
 
       // Building the post string:
 
-      String postStr = "apikey=" + codice;
+      String postStr = "";
       String postLine = "";
 
       if (BME_run) {
