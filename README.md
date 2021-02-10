@@ -35,6 +35,33 @@ The project runs on Espressif's ESP32-DevkitC with ESP32-WROVER-B module
 - Core Debug Level: "None"
 - PSRAM: "Enabled"
 
+## Building from source (using `Makefile`):
+
+On supported build platforms (i.e. Linux, MacOs), you can use `make` to build
+the firmware.  The provided `Makefile` includes targets for installing dependencies
+as well.
+
+To download all required Arduino build tools and dependencies (core and
+libraries) clone this repo and run the following command from within the cloned
+directory:
+
+```
+make env
+```
+
+Then, to build the firmware, simply run:
+
+```
+make
+```
+
+The firmware binary and all build artifacts will be located under the `var/build`
+directory. Run `make help` for details on all targets supported by the `Makefile`.
+
+To run the build to completion, a working Python interpreter must be installed
+on your build system, along with the
+[`pyserial`](https://pypi.org/project/pyserial/) library.
+
 ## Flashing from binary releases (Windows instructions):
 
 1. Connect the ESP32 board to a USB port on your PC. Check that it's been detected correctly:
