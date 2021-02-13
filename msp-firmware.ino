@@ -50,7 +50,11 @@ String api_secret_salt = "secret_salt";
 #endif
 
 // Server name for data upload
+#ifdef API_SERVER
+const char server[] = API_SERVER;
+#else
 const char server[] = "fcub.fluidware.it";
+#endif
 
 // Analog pin 32 (Ozone sensor data) to get semi-random data from for SSL
 // Pick a pin that's not connected or attached to a randomish voltage source
