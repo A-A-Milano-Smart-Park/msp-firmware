@@ -14,6 +14,8 @@ jobs:
         uses: actions/checkout@v2
       - name: Fetch git tag info
         run: git fetch --tags --force
+      - name: Set env
+        run: echo "RELEASE_VERSION=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
       - name: Install Arduino CLI host dependencies
         run: sudo apt install -y python-is-python3
       - name: Install Arduino CLI python dependencies
@@ -22,6 +24,14 @@ jobs:
         run: make env
       - name: Build the sketch
         run: make API_SECRET_SALT="${{ secrets.API_SECRET_SALT }}"
+      - name: Zip artifacts
+        run: >
+          zip --junk-paths msp-firmware-${{ env.RELEASE_VERSION }}.zip \
+            README.md \
+            var/build/msp-firmware.ino.bin \
+            var/build/msp-firmware.ino.partitions.bin \
+            var/packages/esp32/hardware/esp32/1.0.4/tools/partitions/boot_app0.bin \
+            var/packages/esp32/hardware/esp32/1.0.4/tools/sdk/bin/bootloader_qio_80m.bin
       - name: Create Release
         uses: actions/create-release@v1
         id: create_release
@@ -32,13 +42,13 @@ jobs:
           release_name: Release ${{ github.ref }}
           draft: false
           prerelease: false
-      - name: Upload Release Asset
+      - name: Upload Release Assets
         id: upload-release-asset
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }} # This pulls from the CREATE RELEASE step above, referencing it's ID to get its outputs object, which include a `upload_url`. See this blog post for more info: https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
-          asset_path: ./var/build/msp-firmware.ino.bin
-          asset_name: msp-firmware.ino.bin
-          asset_content_type: application/octet-stream
+          asset_path: msp-firmware-${{ env.RELEASE_VERSION }}.zip
+          asset_name: msp-firmware-${{ env.RELEASE_VERSION }}.zip
+          asset_content_type: application/zip
