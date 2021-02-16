@@ -16,6 +16,7 @@ LIBRARIES := \
 	MiCS6814-I2C \
 	"PMS Library" \
 	SSLClient U8g2
+LIBRARIES_URLS := \
 
 # The FQBN is the first specified core, followed by the board.
 FQBN := $(word 1, $(CORES)):$(BOARD)
@@ -102,6 +103,11 @@ $(ETCDIR)/arduino-cli.yaml: $(BINDIR)/arduino-cli
 ifdef ADDITIONAL_URLS
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml config add board_manager.additional_urls $(ADDITIONAL_URLS)
 endif
+# Installing libraries from repositories is considered unsafe
+# https://arduino.github.io/arduino-cli/0.16/configuration/#configuration-keys
+ifdef LIBRARIES_URLS
+	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml config set library.enable_unsafe_install true
+endif
 
 env: $(BINDIR)/arduino-cli $(BINDIR)/arduino-lint $(ETCDIR)/arduino-cli.yaml
 	mkdir -p $(BUILDDIR)
@@ -114,6 +120,9 @@ env: $(BINDIR)/arduino-cli $(BINDIR)/arduino-lint $(ETCDIR)/arduino-cli.yaml
 ifdef LIBRARIES
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib update-index
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib install $(LIBRARIES)
+endif
+ifdef LIBRARIES_URLS
+	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib install --git-url $(LIBRARIES_URLS)
 endif
 
 sketch:
