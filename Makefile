@@ -13,10 +13,10 @@ ADDITIONAL_URLS := \
 CORES := esp32:esp32
 LIBRARIES := \
 	"BSEC Software Library" \
-	MiCS6814-I2C \
 	"PMS Library" \
 	SSLClient U8g2
 LIBRARIES_URLS := \
+	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library
 
 # The FQBN is the first specified core, followed by the board.
 FQBN := $(word 1, $(CORES)):$(BOARD)
