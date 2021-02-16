@@ -16,12 +16,17 @@ The project runs on Espressif's ESP32-DevkitC with ESP32-WROVER-B module
 
 ### Required external libraries (you can also download them through the Arduino IDE):
 
+Libraries listed below can be installed through the Arduino IDE Library Manager:
 - [U8g2 Arduino library](https://github.com/olikraus/U8g2_Arduino)
 - [SSLClient Library](https://github.com/OPEnSLab-OSU/SSLClient)
 - [BSEC Arduino library](https://github.com/BoschSensortec/BSEC-Arduino-library)
 	+ In order for the linker to work properly, you need to perform the modifications described in the BSEC page. They work fine in Arduino IDE v1.8.13.
 - [PMS Library](https://github.com/fu-hsi/pms)
-- [MiCS6814-I2C-Library](https://github.com/eNBeWe/MiCS6814-I2C-Library)
+
+You will also need to install a modified version of [MiCS6814-I2C-MOD-Library](https://github.com/eNBeWe/MiCS6814-I2C-Library/network) which is not available through the Arduino Library Manager and [must be imported manually](https://www.arduino.cc/en/Guide/Libraries#importing-a-zip-library):
+- [MiCS6814-I2C-MOD-Library](https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library)
+
+If you already have the official or any another version of the MiCS6814-I2C-Library installed in your IDE environment, you'll need to first remove it. Libraries are installed to folders under `{sketchbook folder}/libraries`. You can find the location of your sketchbook folder in the Arduino IDE at **File > Preferences > Sketchbook location**. Just delete the appropriate library directory.
 
 ### Build settings (under the Tools tab):
 
@@ -38,8 +43,8 @@ The project runs on Espressif's ESP32-DevkitC with ESP32-WROVER-B module
 ## Building from source (using `Makefile`):
 
 On supported build platforms (i.e. Linux, MacOs), you can use `make` to build
-the firmware.  The provided `Makefile` includes targets for installing dependencies
-as well.
+the firmware.  The provided `Makefile` includes targets for installing all required
+dependencies as well.
 
 To download all required Arduino build tools and dependencies (core and
 libraries) clone this repo and run the following command from within the cloned
