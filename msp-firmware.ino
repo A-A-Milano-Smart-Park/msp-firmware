@@ -533,7 +533,7 @@ void loop() {
         o3read = analogPpmO3Read();
         log_v("Ozone(ppm): %.3f", o3read);
         ozone += o3read;
-        
+
         break;
       }
       Serial.println();
@@ -748,17 +748,20 @@ void loop() {
         break; // exit
       } else {
         log_e("Error while connecting to server!");
-
+        
         if (retries == 2) log_e("Data not uploaded!\n");
-        else log_i("Trying again...\n");
-
+        else log_i("Trying again, %d retries left...\n", 2 - retries);
+        
         String mesg = "";
         if (retries == 2) mesg = "Data not sent!";
-        else mesg = "Retrying...";
+        else mesg = String(2 - retries) + " retries left...";
+        drawTwoLines(25, "Upload error!", 20, mesg.c_str(), 2);
 
-        drawTwoLines(25, "Upload error!", 27, mesg.c_str(), 2);
+        retries++;
       }
+      
     }
+    
   }
   //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
