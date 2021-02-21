@@ -297,8 +297,23 @@ void setup() {
     Serial.println("Connecting to WiFi...\n");
     connected_ok = connectWiFi();
     if (connected_ok) {
-      Serial.println("Done! Retrieving date&time from NTP server...\n");
+      Serial.println("Connection with %s made successfully! Retrieving date&time from NTP server...", ssid.c_str());
+      drawScrHead();
+      u8g2.drawStr(15, 45, "WiFi connected!");
+      u8g2.sendBuffer();
+      delay(2000);
       datetime_ok = syncNTPTime(&dayStamp, &timeStamp); // Connecting with NTP server and retrieving date&time
+      drawScrHead();
+      if (datetime_ok) {
+        Serial.println("Done! Current date&time: %s %s", dayStamp.c_str(), timeStamp.c_str());
+        u8g2.drawStr(15, 45, "Date & time ok!");
+      } else {
+        log_e("Failed to obtain date&time!");
+        u8g2.drawStr(15, 45, "Date & time err!");
+      }
+      Serial.println();
+      u8g2.sendBuffer();
+      delay(2000);
     }
   }
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -653,8 +668,23 @@ void loop() {
     Serial.println("Reconnecting to WiFi...\n");
     connected_ok = connectWiFi();
     if (connected_ok) {
-      Serial.println("Done! Updating date&time from NTP server...\n");
+      Serial.println("Connection with %s made successfully! Updating date&time from NTP server...", ssid.c_str());
+      drawScrHead();
+      u8g2.drawStr(15, 45, "WiFi connected!");
+      u8g2.sendBuffer();
+      delay(2000);
       datetime_ok = syncNTPTime(&dayStamp, &timeStamp); // Connecting with NTP server and retrieving date&time
+      drawScrHead();
+      if (datetime_ok) {
+        Serial.println("Done! Current date&time: %s %s", dayStamp.c_str(), timeStamp.c_str());
+        u8g2.drawStr(15, 45, "Date & time ok!");
+      } else {
+        log_e("Failed to obtain date&time!");
+        u8g2.drawStr(15, 45, "Date & time err!");
+      }
+      Serial.println();
+      u8g2.sendBuffer();
+      delay(2000);
     }
   }
   //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -666,7 +696,7 @@ void loop() {
     drawTwoLines(15, "Uploading data to", 15, server.c_str(), 0);
     short retries = 0;
 
-    while (retries < 3) {
+    while (retries < 4) {
 
       if (client.connect(server.c_str(), 443)) {
         auto contime = millis() - start;
@@ -748,20 +778,20 @@ void loop() {
         break; // exit
       } else {
         log_e("Error while connecting to server!");
-        
+
         if (retries == 2) log_e("Data not uploaded!\n");
-        else log_i("Trying again, %d retries left...\n", 2 - retries);
-        
+        else log_i("Trying again, %d retries left...\n", 3 - retries);
+
         String mesg = "";
-        if (retries == 2) mesg = "Data not sent!";
-        else mesg = String(2 - retries) + " retries left...";
-        drawTwoLines(25, "Upload error!", 20, mesg.c_str(), 2);
+        if (retries == 3) mesg = "Data not sent!";
+        else mesg = String(3 - retries) + " retries left...";
+        drawTwoLines(25, "Upload error!", 20, mesg.c_str(), 5);
 
         retries++;
       }
-      
+
     }
-    
+
   }
   //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 

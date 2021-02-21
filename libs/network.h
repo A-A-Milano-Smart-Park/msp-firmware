@@ -23,11 +23,6 @@ bool syncNTPTime(String *date, String *timeT) { // stores date&time in a conveni
   short retries = 0;
   while (!getLocalTime(&timeinfo)) {
 	if (retries > 1) {
-      log_e("Failed to obtain date&time!\n");
-      drawScrHead();
-      u8g2.drawStr(15, 45, "Date & time err!");
-      u8g2.sendBuffer();
-      delay(2000);
       return false;
 	}
 	retries++;
@@ -37,11 +32,6 @@ bool syncNTPTime(String *date, String *timeT) { // stores date&time in a conveni
   strftime(Time, 9, "%T", &timeinfo);
   *date = String(Date);
   *timeT = String(Time);
-  log_i("Current date&time: %s %s\n", dayStamp.c_str(), timeStamp.c_str());
-  drawScrHead();
-  u8g2.drawStr(15, 45, "Date & time ok!");
-  u8g2.sendBuffer();
-  delay(2000);
   return true;
 
 }
@@ -114,13 +104,8 @@ bool connectWiFi() { // sets WiFi mode and tx power (var wifipow), performs conn
 		log_i("%s\n", dots.c_str());
 
         if (WiFi.status() == WL_CONNECTED) { // Connection successful
-          log_i("Connection with %s made successfully!\n", ssid.c_str());
-          drawScrHead();
-          u8g2.drawStr(15, 45, "WiFi connected!");
-          u8g2.sendBuffer();
-          delay(2000);
-
-          return true; // All done correctly
+		
+          return true;
         }
       } else {
         log_e("%s not found!\n", ssid.c_str());
@@ -149,7 +134,7 @@ bool connectWiFi() { // sets WiFi mode and tx power (var wifipow), performs conn
     }
   }
 
-  return false; // No internet connection
+  return false;
 
 }
 
