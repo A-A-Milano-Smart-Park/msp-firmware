@@ -2,10 +2,11 @@
                         Milano Smart Park Firmware
                    Copyright (c) 2021 Norman Mulinacci
 
-      This firmware is usable under the terms and conditions of the
-           GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
+          This code is usable under the terms and conditions of the
+             GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
 
-  Parts of this firmware are based on open source works freely distributed by Luca Crotti @2019
+             Parts of this code are based on open source works
+                 freely distributed by Luca Crotti @2019
 */
 
 // Basic system libraries
@@ -17,7 +18,7 @@
 #ifdef VERSION_STRING
 String ver = VERSION_STRING;
 #else
-String ver = "3.0rc2"; //current firmware version
+String ver = "3.0rc3"; //current firmware version
 #endif
 
 // WiFi Client, NTP time management and SSL libraries
@@ -47,11 +48,13 @@ String api_secret_salt = API_SECRET_SALT;
 String api_secret_salt = "secret_salt";
 #endif
 
-// Server name for data upload
+// Default server name for SSL data upload
 #ifdef API_SERVER
-const char server[] = API_SERVER;
+String server = API_SERVER;
+bool server_ok = true;
 #else
-const char server[] = "fcub.fluidware.it";
+String server = "";
+bool server_ok = false;
 #endif
 
 // Analog pin 32 (Ozone sensor raw adc data) to get semi-random data from for SSL
@@ -166,24 +169,28 @@ void setup() {
   drawBoot(&ver, buildyear);
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
+  //+++++++++++++ GET ESP32 MAC ADDRESS ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  macAdr = WiFi.macAddress();
+  log_i("MAC Address: %s\n", macAdr.c_str());
+  drawTwoLines(28, "MAC ADDRESS:", 12, macAdr.c_str(), 6);
+  //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
   // SD CARD INIT, CHECK AND PARSE CONFIGURATION ++++++++++++++++++++++++++++++++++++++++++++++++++
   Serial.println("Initializing SD Card...\n");
   SD_ok = initializeSD();
   if (SD_ok) {
     Serial.println("Reading configuration...\n");
     cfg_ok = checkConfig();
+    if (!server_ok) {
+      log_e("No server URL defined. Can't upload data!\n");
+      drawTwoLines(20, "No URL defined!", 35, "No upload!", 6);
+    }
   }
   // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-  //+++++++++++++ GET MAC ADDRESS ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  macAdr = WiFi.macAddress();
-  log_i("MAC Address: %s\n", macAdr.c_str());
-  drawTwoLines(28, "MAC ADDRESS:", 12, macAdr.c_str(), 6);
-  //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
   // SET logpath AND CHECK LOGFILE EXISTANCE +++++++++++++++++++++++++++++++++++++
   if (SD_ok) {
-    logpath = "/LOG_" + deviceid + "_v" + ver + ".csv";
+    logpath = "/log_" + deviceid + "_v" + ver + ".csv";
     checkLogFile();
   }
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -357,7 +364,7 @@ void loop() {
   if (PMS_run && avg_delay < 60) {
     log_i("Waking up PMS5003 sensor after sleep...\n");
     pms.wakeUp();
-    Serial.println("Wait 1:00 min. for PMS5003 sensor preheat\n");
+    Serial.println("Wait 1 min. for PMS5003 sensor preheat\n");
     drawCountdown(60, 2, "Preheating PMS5003..."); //30 seconds is fine, 1 minute is better
   }
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -524,22 +531,21 @@ void loop() {
           continue;
         }
         o3read = analogPpmO3Read();
-        log_v("Ozone(ppm): %.3f\n", o3read);
+        log_v("Ozone(ppm): %.3f", o3read);
         ozone += o3read;
-
+        
         break;
       }
+      Serial.println();
     }
     //+++++++++++++++++++++++++++++++++++++++++++++++++++++
 
     if (PMS_run && avg_delay >= 60) {
-      log_i("Putting PMS5003 sensor to sleep...");
+      log_i("Putting PMS5003 sensor to sleep...\n");
       pms.sleep();
       delay(1500);
     }
 
-    log_i("\n");
-    
   }
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   //------------------------------------------------------------------------
@@ -654,15 +660,15 @@ void loop() {
   //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
   //++++++  UPDATING SERVER VIA HTTPS ++++++++++++++++++++++++++++++++++++++++++++
-  if (connected_ok && datetime_ok) {
+  if (server_ok && connected_ok && datetime_ok) {
     auto start = millis(); // time for connection:
-    Serial.println("Uploading data to server " + String(server) + " through HTTPS in progress...\n");
-    drawTwoLines(10, "Uploading data", 15, "to server...", 0);
+    Serial.println("Uploading data to " + server + " through HTTPS in progress...\n");
+    drawTwoLines(15, "Uploading data to", 15, server.c_str(), 0);
     short retries = 0;
 
     while (retries < 3) {
 
-      if (client.connect(server, 443)) {
+      if (client.connect(server.c_str(), 443)) {
         auto contime = millis() - start;
         log_i("Connection to server made! Time: %d\n", contime);
 
@@ -710,7 +716,7 @@ void loop() {
 
         String postLine = ""; // Sending client requests
         client.println("POST /api/v1/records HTTP/1.1");
-        postLine = "Host: " + String(server);
+        postLine = "Host: " + server;
         client.println(postLine);
         postLine = "Authorization: Bearer " + api_secret_salt + ":" + deviceid;
         client.println(postLine);
@@ -737,7 +743,7 @@ void loop() {
         client.stop(); // Stopping the client
 
         log_i("Data uploaded successfully!\n"); // messages
-        drawTwoLines(15, "Data uploaded", 15, "successfully!", 2);
+        drawTwoLines(25, "Data uploaded", 27, "successfully!", 2);
 
         break; // exit
       } else {
@@ -750,7 +756,7 @@ void loop() {
         if (retries == 2) mesg = "Data not sent!";
         else mesg = "Retrying...";
 
-        drawTwoLines(10, "Upload error!", 15, mesg.c_str(), 2);
+        drawTwoLines(25, "Upload error!", 27, mesg.c_str(), 2);
       }
     }
   }

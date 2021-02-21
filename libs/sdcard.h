@@ -2,10 +2,11 @@
                         Milano Smart Park Firmware
                    Copyright (c) 2021 Norman Mulinacci
 
-      This firmware is usable under the terms and conditions of the
-           GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
+          This code is usable under the terms and conditions of the
+             GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
 
-  Parts of this firmware are based on open source works freely distributed by Luca Crotti @2019
+             Parts of this code are based on open source works
+                 freely distributed by Luca Crotti @2019
 */
 
 // SD Card and File Management Functions
@@ -67,11 +68,11 @@ void appendFile(fs::FS &fs, const char path[], const char message[]) { // append
 bool parseConfig(File fl) { // parses the configuration file on the SD Card
 
   bool outcome = true;
-  String command[10];
+  String command[11];
   String temp;
   int i = 0;
   unsigned long lastpos = 0;
-  while (fl.available() && i < 10) {   // Storing the config file in a string array
+  while (fl.available() && i < 11) {   // Storing the config file in a string array
     fl.seek(lastpos);
     if (i == 0) temp = fl.readStringUntil('#');
     command[i] = fl.readStringUntil(';');
@@ -202,7 +203,29 @@ bool parseConfig(File fl) { // parses the configuration file on the SD Card
   } else {
     log_e("Error parsing SEALEVELALT line. Falling back to default value");
   }
-  log_i("sealevelalt = *%.2f*\n", sealevelalt);
+  log_i("sealevelalt = *%.2f*", sealevelalt);
+  //server
+  if (command[10].startsWith("upload_server", 0)) {
+    temp = "";
+    temp = command[10].substring(command[10].indexOf("upload_server") + 14, command[10].length());
+	if (temp.length() > 0) {
+      server = temp;
+	  server_ok = true;
+	  log_i("server = *%s*\n", server.c_str());
+    } else {
+	  #ifdef API_SERVER
+	  log_e("SERVER value is empty. Falling back to value defined at compile time\n");
+	  #else
+	  log_e("SERVER value is empty!\n");
+	  #endif
+    }
+  } else {
+	#ifdef API_SERVER
+	log_e("Error parsing SERVER line. Falling back to value defined at compile time\n");
+	#else
+	log_e("Error parsing SERVER line!\n");
+	#endif
+  }
 
   return outcome;
 
@@ -233,7 +256,7 @@ bool checkConfig() { // verifies the existance of the configuration file, create
 
     if (cfgfile) {
       cfgfile.close();
-      appendFile(SD, "/config_v2.cfg", "#ssid=;\n#password=;\n#codice=;\n#potenza_wifi=19.5dBm;\n#attesa(minuti)=0;\n#numero_misurazioni_media=6;\n#ritardo_media(secondi)=273;\n#attiva_MQ7=0;\n#abilita_IAQ=0;\n#altitudine_s.l.m.=122.0;\n\n//altitudine_s.l.m. influenza la misura della pressione atmosferica e va adattata a seconda della zona. 122m è l'altitudine di Milano\n//Valori possibili per potenza_wifi: -1, 2, 5, 7, 8.5, 11, 13, 15, 17, 18.5, 19, 19.5 dBm");
+      appendFile(SD, "/config_v2.cfg", "#ssid=;\n#password=;\n#codice=;\n#potenza_wifi=19.5dBm;\n#attesa(minuti)=0;\n#numero_misurazioni_media=6;\n#ritardo_media(secondi)=273;\n#attiva_MQ7=0;\n#abilita_IAQ=0;\n#altitudine_s.l.m.=122.0;\n#upload_server=;\n\n//altitudine_s.l.m. influenza la misura della pressione atmosferica e va adattata a seconda della zona. 122m è l'altitudine di Milano\n//Valori possibili per potenza_wifi: -1, 2, 5, 7, 8.5, 11, 13, 15, 17, 18.5, 19, 19.5 dBm");
       log_i("New config file with template created!\n");
     } else {
       log_e("Error writing to SD Card!\n");

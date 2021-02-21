@@ -2,10 +2,11 @@
                         Milano Smart Park Firmware
                    Copyright (c) 2021 Norman Mulinacci
 
-      This firmware is usable under the terms and conditions of the
-           GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
+          This code is usable under the terms and conditions of the
+             GNU GENERAL PUBLIC LICENSE Version 3, 29 June 2007
 
-  Parts of this firmware are based on open source works freely distributed by Luca Crotti @2019
+             Parts of this code are based on open source works
+                 freely distributed by Luca Crotti @2019
 */
 
 // Netwok Management Functions
@@ -19,13 +20,17 @@ bool syncNTPTime(String *date, String *timeT) { // stores date&time in a conveni
   //configTime(gmtOffset_sec, daylightOffset_sec, ntpServer), Italy is GMT+1, DST is +1hour
   configTime(3600, 3600, "pool.ntp.org");
   struct tm timeinfo;
-  if (!getLocalTime(&timeinfo)) {
-    log_e("Failed to obtain date&time!\n");
-    drawScrHead();
-    u8g2.drawStr(15, 45, "Date & time err!");
-    u8g2.sendBuffer();
-    delay(2000);
-    return false;
+  short retries = 0;
+  while (!getLocalTime(&timeinfo)) {
+	if (retries > 1) {
+      log_e("Failed to obtain date&time!\n");
+      drawScrHead();
+      u8g2.drawStr(15, 45, "Date & time err!");
+      u8g2.sendBuffer();
+      delay(2000);
+      return false;
+	}
+	retries++;
   }
   char Date[11], Time[9];
   strftime(Date, 11, "%d/%m/%Y", &timeinfo);
