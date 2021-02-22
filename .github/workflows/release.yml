@@ -28,6 +28,7 @@ jobs:
         run: >
           zip --junk-paths msp-firmware-${{ env.RELEASE_VERSION }}.zip \
             README.md \
+            scripts/RUNME.BAT \
             var/build/msp-firmware.ino.bin \
             var/build/msp-firmware.ino.partitions.bin \
             var/packages/esp32/hardware/esp32/1.0.4/tools/partitions/boot_app0.bin \
