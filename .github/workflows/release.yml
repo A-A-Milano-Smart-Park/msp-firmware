@@ -24,6 +24,8 @@ jobs:
         run: make env
       - name: Build the sketch
         run: make API_SECRET_SALT="${{ secrets.API_SECRET_SALT }}"
+      - name: Download external flashing tools to attach to release
+        run: curl -o esptool-2.6.1-windows.zip https://dl.espressif.com/dl/esptool-2.6.1-windows.zip && unzip esptool-2.6.1-windows.zip
       - name: Zip artifacts
         run: >
           zip --junk-paths msp-firmware-${{ env.RELEASE_VERSION }}.zip \
@@ -32,7 +34,8 @@ jobs:
             var/build/msp-firmware.ino.bin \
             var/build/msp-firmware.ino.partitions.bin \
             var/packages/esp32/hardware/esp32/1.0.4/tools/partitions/boot_app0.bin \
-            var/packages/esp32/hardware/esp32/1.0.4/tools/sdk/bin/bootloader_qio_80m.bin
+            var/packages/esp32/hardware/esp32/1.0.4/tools/sdk/bin/bootloader_qio_80m.bin \
+            esptool/esptool.exe
       - name: Create Release
         uses: actions/create-release@v1
         id: create_release
