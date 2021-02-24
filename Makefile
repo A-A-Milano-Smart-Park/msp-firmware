@@ -40,7 +40,7 @@ CACHEDIR := $(BUILDDIR)/cache
 SRCS := $(shell find $(SRCDIR) -name "*.ino" -or -name "*.cpp" -or -name "*.c" -or -name "*.h")
 
 # Compute version string from git sandbox status
-VERSION_STRING := $(shell git describe --tags --dirty)
+VERSION_STRING := $(shell git describe --always --tags --dirty)
 
 ifdef API_SECRET_SALT
 CPP_EXTRA_FLAGS := -DAPI_SECRET_SALT="$(API_SECRET_SALT)"
