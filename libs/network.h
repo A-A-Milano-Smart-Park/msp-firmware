@@ -153,7 +153,8 @@ void connAndGetTime() { // lame function to set global vars
     drawScrHead();
     if (datetime_ok) {
 	  String tempT = dayStamp + " " + timeStamp;
-      Serial.println("Done! Current date&time: " + tempT);
+      Serial.println("Done!");
+	  log_i("Current date&time: %s", tempT.c_str());
       drawTwoLines(27, "Date & Time:", 8, tempT.c_str(), 0);
 	  log_d("recordedAt string is: *%s*", recordedAt.c_str());
     } else {

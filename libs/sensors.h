@@ -86,3 +86,42 @@ float analogPpmO3Read() { // reads and calculates ozone ppm value from analog oz
 }
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+short evaluateMSPIndex(float pm25, float nox, float o3) { // evaluates the MPS# index from ug/m3 concentrations of specific gases using standard IAQ values (needs 1h averages)
+
+  // possible returned values are: 0 -> n.d.(grey); 1 -> good(green); 2 -> acceptable(yellow); 3 -> bad(red); 4 -> really bad(black)
+  log_i("Evaluating MSP# index...\n");
+
+  short msp[3] = {0, 0, 0}; // msp[0] is for pm2.5, msp[1] is for nox, msp[2] is for o3
+
+  if (PMS_run) {
+    if (pm25 > 50) msp[0] = 4;
+    else if (pm25 > 25) msp[0] = 3;
+    else if (pm25 > 10) msp[0] = 2;
+    else msp[0] = 1;
+  }
+  if (MICS_run) {
+    if (nox > 400) msp[1] = 4;
+    else if (nox > 200) msp[1] = 3;
+    else if (nox > 100) msp[1] = 2;
+    else msp[1] = 1;
+  }
+  if (O3_run) {
+    if (o3 > 240) msp[2] = 4;
+    else if (o3 > 180) msp[2] = 3;
+    else if (o3 > 120) msp[2] = 2;
+    else msp[2] = 1;
+  }
+
+  if (msp[0] > 0 && msp[1] > 0 && msp[2] > 0 && (msp[0] == msp [1] || msp[0] == msp[2] || msp[1] == msp[2])) { //return the most dominant
+    if (msp[1] == msp[2]) return msp[1];
+    else return msp[0];
+  } else { // return the worst one
+    if (msp[0] > msp[1] && msp[0] > msp[2]) return msp[0];
+    else if (msp[1] > msp[2]) return  msp[1];
+    else return msp[2];
+  }
+  
+}
+
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

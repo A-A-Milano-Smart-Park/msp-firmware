@@ -279,7 +279,7 @@ void checkLogFile() { // verifies the existance of the csv log using the logpath
       filecsv.close();
       String headertext = "Log file of device " + deviceid + " | Firmware v" + ver + " | MAC Address: " + macAdr;
       appendFile(SD, logpath.c_str(), headertext.c_str());
-      appendFile(SD, logpath.c_str(), "recordedAt;date;time;temp;hum;PM1;PM2_5;PM10;pres;radiation;nox;co;nh3;o3;voc;methane;propane;butane;hydrogen;ethanol");
+      appendFile(SD, logpath.c_str(), "recordedAt;date;time;temp;hum;PM1;PM2_5;PM10;pres;radiation;nox;co;nh3;o3;voc;msp#;methane;propane;butane;hydrogen;ethanol");
       log_i("Log file created!\n");
       return;
     }
@@ -355,7 +355,7 @@ void logToSD() { // builds a new logfile line and calls addToLog() (using logpat
   String logvalue = "";
 
   // Data is layed out as follows:
-  // "recordedAt;date;time;temp;hum;PM1;PM2_5;PM10;pres;radiation;nox;co;nh3;o3;voc;methane;propane;butane;hydrogen;ethanol"
+  // "recordedAt;date;time;temp;hum;PM1;PM2_5;PM10;pres;radiation;nox;co;nh3;o3;voc;msp#;methane;propane;butane;hydrogen;ethanol"
 
   logvalue += recordedAt; logvalue += ";";
   logvalue += dayStamp; logvalue += ";";
@@ -394,6 +394,7 @@ void logToSD() { // builds a new logfile line and calls addToLog() (using logpat
   if (BME_run) {
     logvalue += floatToComma(VOC);
   } logvalue += ";";
+  logvalue += String(MSP); logvalue += ";";
   if (MICS_run) {
     logvalue += floatToComma(MICS_CH4);
   } logvalue += ";";

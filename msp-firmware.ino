@@ -18,7 +18,7 @@
 #ifdef VERSION_STRING
 String ver = VERSION_STRING;
 #else
-String ver = "3.0rc5"; //current firmware version
+String ver = "3.0rc6"; //current firmware version
 #endif
 
 // WiFi Client, NTP time management and SSL libraries
@@ -132,6 +132,9 @@ bool O3_run;
 
 // String to store the MAC Address
 String macAdr = "";
+
+// Var for MSP# evaluation
+short MSP = -1; // set to -1 to distinguish from grey (0)
 
 // Include system functions ordered on dependencies
 #include "libs/sensors.h"
@@ -351,6 +354,7 @@ void loop() {
   MICS_C2H5OH = 0.0;
   short O3fails = 0;
   ozone = 0.0;
+  MSP = -1; // reset to -1 to distinguish from grey (0)
 
   //++++++++++++++++ PREHEAT PMS5003 (IF AVG_DELAY < 60 SEC.) +++++
   if (PMS_run && avg_delay < 60) {
@@ -459,7 +463,7 @@ void loop() {
       log_i("Sampling MICS6814 sensor...");
       errcount = 0;
       while (1) {
-        if (gas.measureCO() < 0) {
+        if (gas.measureCO() < 0 || gas.measureCO() > 100) {
           if (errcount > 2) {
             log_e("Error while sampling MICS6814 sensor!");
             MICSfails++;
@@ -607,8 +611,15 @@ void loop() {
   }
   //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
+  //+++++++++++ RECONNECTING AND UPDATING DATE/TIME +++++++++++++++++++++
+  if (cfg_ok) {
+    connAndGetTime();
+  }
+  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
   //+++++++++++++ SERIAL LOGGING  +++++++++++++++++++++++
   Serial.println("Measurements log:\n");
+  Serial.println("Date&time: " + dayStamp + " " + timeStamp + "\n");
   if (BME_run) {
     Serial.println("Temperature: " + floatToComma(temp) + "°C");
     Serial.println("Humidity: " + floatToComma(hum) + "%");
@@ -638,12 +649,6 @@ void loop() {
 
   //+++++++++++  UPDATING DISPLAY  ++++++++++++++++++++++++++++++++++++++++++
   drawMeasurements();
-  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-  //+++++++++++ RECONNECTING AND UPDATING DATE/TIME +++++++++++++++++++++
-  if (cfg_ok) {
-    connAndGetTime();
-  }
   //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
   //++++++  UPDATING SERVER VIA HTTPS ++++++++++++++++++++++++++++++++++++++++++++
@@ -690,6 +695,8 @@ void loop() {
           postStr += "&o3=";
           postStr += String(ozone, 3);
         }
+        postStr += "&msp=";
+        postStr += String(MSP = evaluateMSPIndex(PM25, MICS_NO2, ozone)); // implicitly casting PM25 as float for MSP evaluation only
         postStr += "&mac=";
         postStr += macAdr;
         postStr += "&recordedAt=";
@@ -743,7 +750,7 @@ void loop() {
         drawTwoLines(25, "Upload error!", 20, mesg.c_str(), 5);
 
         retries++;
-        
+
       }
 
     }
