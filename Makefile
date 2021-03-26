@@ -19,7 +19,8 @@ LIBRARIES_URLS := \
 	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library
 
 # The FQBN is the core, followed by the board.
-FQBN := $(CORE):$(BOARD)
+CORE_NAME := $(shell echo $(CORE) | cut -f1 -d@)
+FQBN := $(CORE_NAME):$(BOARD)
 
 # Treat all warnings as errors.
 BUILDPROP := compiler.warning_flags.all='-Wall -Wextra'
