@@ -117,7 +117,8 @@ env: $(BINDIR)/arduino-cli $(BINDIR)/arduino-lint $(ETCDIR)/arduino-cli.yaml
 	# add platform.local.txt to installed esp32 platform
 	# required by BSEC Arduino Library
 	# https://github.com/BoschSensortec/BSEC-Arduino-library#3-modify-the-platformtxt-file
-	cp platform.local.txt $(VARDIR)/packages/esp32/hardware/esp32/1.0.4/
+	CORE_VERSION=$$($(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml core list | grep "$(CORE_NAME)" | cut -f2 -d' ') ; \
+	cp platform.local.txt $(VARDIR)/packages/esp32/hardware/esp32/$$CORE_VERSION/
 ifdef LIBRARIES
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib update-index
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib install $(LIBRARIES)
