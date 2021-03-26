@@ -10,7 +10,7 @@ PORT := /dev/ttyACM0
 ADDITIONAL_URLS := \
 	https://dl.espressif.com/dl/package_esp32_index.json \
 	http://arduino.esp8266.com/stable/package_esp8266com_index.json
-CORES := esp32:esp32
+CORE := esp32:esp32
 LIBRARIES := \
 	"BSEC Software Library" \
 	"PMS Library" \
@@ -18,8 +18,8 @@ LIBRARIES := \
 LIBRARIES_URLS := \
 	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library
 
-# The FQBN is the first specified core, followed by the board.
-FQBN := $(word 1, $(CORES)):$(BOARD)
+# The FQBN is the core, followed by the board.
+FQBN := $(CORE):$(BOARD)
 
 # Treat all warnings as errors.
 BUILDPROP := compiler.warning_flags.all='-Wall -Wextra'
@@ -112,7 +112,7 @@ endif
 env: $(BINDIR)/arduino-cli $(BINDIR)/arduino-lint $(ETCDIR)/arduino-cli.yaml
 	mkdir -p $(BUILDDIR)
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml core update-index
-	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml core install $(CORES)
+	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml core install $(CORE)
 	# add platform.local.txt to installed esp32 platform
 	# required by BSEC Arduino Library
 	# https://github.com/BoschSensortec/BSEC-Arduino-library#3-modify-the-platformtxt-file
