@@ -51,7 +51,7 @@ export ARDUINO_DATA_DIR = $(VARDIR)
 
 ################################################################################
 
-.PHONY: all help env properties lint build upload clean clean-all
+.PHONY: all help env print-core-version properties lint build upload clean clean-all
 
 all: build
 
@@ -109,6 +109,9 @@ endif
 ifdef LIBRARIES_URLS
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml config set library.enable_unsafe_install true
 endif
+
+print-core-version:
+	@echo $$($(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml core list | grep "$(CORE_NAME)" | cut -f2 -d' ') ; \
 
 env: $(BINDIR)/arduino-cli $(BINDIR)/arduino-lint $(ETCDIR)/arduino-cli.yaml
 	mkdir -p $(BUILDDIR)
