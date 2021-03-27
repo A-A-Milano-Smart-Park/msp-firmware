@@ -46,6 +46,10 @@ ifdef API_SECRET_SALT
 CPP_EXTRA_FLAGS := -DAPI_SECRET_SALT="$(API_SECRET_SALT)"
 endif
 
+ifdef API_SERVER
+CPP_EXTRA_FLAGS += -DAPI_SERVER="$(API_SERVER)"
+endif
+
 # Set the location of the Arduino environment.
 export ARDUINO_DATA_DIR = $(VARDIR)
 
