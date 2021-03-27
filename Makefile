@@ -1,4 +1,4 @@
-ARDUINO_CLI_VERSION :=
+ARDUINO_CLI_VERSION := 0.17.0
 ARDUINO_CLI_URL := https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh
 ARDUINO_LINT_VERSION :=
 ARDUINO_LINT_URL := https://raw.githubusercontent.com/arduino/arduino-lint/main/etc/install.sh
@@ -10,11 +10,12 @@ PORT := /dev/ttyACM0
 ADDITIONAL_URLS := \
 	https://dl.espressif.com/dl/package_esp32_index.json \
 	http://arduino.esp8266.com/stable/package_esp8266com_index.json
-CORE := esp32:esp32
+CORE := esp32:esp32@1.0.6
 LIBRARIES := \
-	"BSEC Software Library" \
-	"PMS Library" \
-	SSLClient U8g2
+	"BSEC Software Library"@1.6.1480 \
+	"PMS Library"@1.1.0 \
+	SSLClient@1.6.11 \
+	U8g2@2.28.10
 LIBRARIES_URLS := \
 	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library
 
