@@ -23,7 +23,7 @@ jobs:
       - name: Setup Arduino CLI environment
         run: make env
       - name: Build the sketch
-        run: make API_SECRET_SALT="${{ secrets.API_SECRET_SALT }}"
+        run: make API_SECRET_SALT="${{ secrets.API_SECRET_SALT }}" API_SERVER="${{ secrets.API_SERVER }}"
       - name: Download external flashing tools to attach to release
         run: curl -o esptool-2.6.1-windows.zip https://dl.espressif.com/dl/esptool-2.6.1-windows.zip && unzip esptool-2.6.1-windows.zip
       - name: Grab core version
