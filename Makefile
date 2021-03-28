@@ -154,7 +154,11 @@ $(BUILDDIR)/$(SKETCH).ino.elf: $(SRCS)
 	--build-path $(BUILDDIR) --build-cache-path $(CACHEDIR) \
 	--build-property $(BUILDPROP) \
 	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)" $(CPP_EXTRA_FLAGS)' \
+ifdef CUSTOM_DEBUG_LEVEL
+	--build-property 'build.code_debug=CUSTOM_DEBUG_LEVEL' \
+else
 	--build-property 'build.code_debug=1' \
+endif
 	--warnings all --log-file $(LOGDIR)/build.log --log-level debug $(ARGS_VERBOSE) \
 	--fqbn $(FQBN) $(SRCDIR)
 
