@@ -163,7 +163,7 @@ build: $(BUILDDIR)/$(SKETCH).ino.elf
 upload: build
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml upload \
 	--log-file $(LOGDIR)/upload.log --log-level debug $(ARGS_VERBOSE) \
-	--port $(PORT) --fqbn $(FQBN) --input-file $(BUILDDIR)/$(SKETCH).ino.hex
+	--port $(PORT) --fqbn $(FQBN) --input-file $(BUILDDIR)/$(SKETCH).ino.bin
 
 clean:
 	rm -rf $(BUILDDIR)
