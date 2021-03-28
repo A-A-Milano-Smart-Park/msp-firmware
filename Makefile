@@ -51,6 +51,10 @@ ifdef API_SERVER
 CPP_EXTRA_FLAGS += -DAPI_SERVER="$(API_SERVER)"
 endif
 
+ifndef CUSTOM_DEBUG_LEVEL
+define CUSTOM_DEBUG_LEVEL=5
+endif
+
 # Set the location of the Arduino environment.
 export ARDUINO_DATA_DIR = $(VARDIR)
 
@@ -154,9 +158,7 @@ $(BUILDDIR)/$(SKETCH).ino.elf: $(SRCS)
 	--build-path $(BUILDDIR) --build-cache-path $(CACHEDIR) \
 	--build-property $(BUILDPROP) \
 	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)" $(CPP_EXTRA_FLAGS)' \
-ifdef CUSTOM_DEBUG_LEVEL
 	--build-property 'build.code_debug=CUSTOM_DEBUG_LEVEL' \
-endif
 	--warnings all --log-file $(LOGDIR)/build.log --log-level debug $(ARGS_VERBOSE) \
 	--fqbn $(FQBN) $(SRCDIR)
 
