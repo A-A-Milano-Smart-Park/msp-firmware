@@ -52,7 +52,7 @@ CPP_EXTRA_FLAGS += -DAPI_SERVER="$(API_SERVER)"
 endif
 
 ifndef CUSTOM_DEBUG_LEVEL
-define CUSTOM_DEBUG_LEVEL=5
+CUSTOM_DEBUG_LEVEL := 5
 endif
 
 # Set the location of the Arduino environment.
