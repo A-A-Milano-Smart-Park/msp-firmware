@@ -18,7 +18,7 @@
 #ifdef VERSION_STRING // current firmware version
 String ver = VERSION_STRING;
 #else
-String ver = "v3.0.1";
+String ver = "v3.1.0";
 #endif
 
 // WiFi Client, NTP time management and SSL libraries
@@ -89,7 +89,6 @@ String passw = "";
 String deviceid = "";
 String logpath = "";
 wifi_power_t wifipow = WIFI_POWER_19_5dBm;
-int waittime = 0;
 int avg_measurements = 30;
 int avg_delay = 55;
 
@@ -119,14 +118,12 @@ float MICS_NH3 = 0.0;
 
 // Variables for ZE25-O3
 float ozone = 0.0;
+int o3zeroval = 1489; // ozone sensor ADC zero default offset (0.4V to 1.1V range in 12bit resolution at 0dB attenuation)
 
 // Date and time vars
 String recordedAt = "";
 String dayStamp = "";
 String timeStamp = "";
-
-// String to store the MAC Address
-String macAdr = "";
 
 // Var for MSP# evaluation
 short MSP = -1; // set to -1 to distinguish from grey (0)
@@ -152,7 +149,7 @@ void setup() {
   Serial.begin(115200);
   delay(2000);// time for serial init
 
-  // SET UNUSED PINS TO OUTPUT ++++++++++++++++++++++++++++++++++++
+  // SET UNUSED PINS TO OUTPUT AND ADC ++++++++++++++++++++++++++++++++++++
   pinMode(33, OUTPUT);
   pinMode(25, OUTPUT);
   pinMode(26, OUTPUT);
@@ -162,6 +159,9 @@ void setup() {
   pinMode(0, OUTPUT);
   pinMode(2, OUTPUT);
   pinMode(15, OUTPUT);
+  analogReadResolution(12); // ADC settings for ZE25-O3
+  analogSetWidth(12);
+  analogSetAttenuation((adc_attenuation_t)0);
 
   // BOOT STRINGS ++++++++++++++++++++++++++++++++++++++++++++++++++++++
   short buildyear = 2021;
@@ -181,18 +181,13 @@ void setup() {
   drawBoot(&ver, buildyear);
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-  //+++++++++++++ GET ESP32 MAC ADDRESS ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  macAdr = WiFi.macAddress();
-  log_i("MAC Address: %s\n", macAdr.c_str());
-  drawTwoLines(28, "MAC ADDRESS:", 12, macAdr.c_str(), 6);
-  //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
   // SD CARD INIT, CHECK AND PARSE CONFIGURATION ++++++++++++++++++++++++++++++++++++++++++++++++++
   Serial.println("Initializing SD Card...\n");
+  drawTwoLines(23, "Initializing", 35, "SD Card...", 0);
   SD_ok = initializeSD();
   if (SD_ok) {
     Serial.println("Reading configuration...\n");
-    cfg_ok = checkConfig();
+    cfg_ok = checkConfig("/config_v3.txt");
     if (!server_ok) {
       log_e("No server URL defined. Can't upload data!\n");
       drawTwoLines(20, "No URL defined!", 35, "No upload!", 6);
@@ -211,6 +206,18 @@ void setup() {
     checkLogFile();
   }
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+  //+++++++++++++ GET ESP32 INFO +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  String modelrev = String(ESP.getChipModel()) + " Rev " + String(ESP.getChipRevision());
+  Serial.println("ESP32 Chip model = " + modelrev);
+  uint32_t chipId = 0;
+  for (int i = 0; i < 17; i = i + 8) {
+    chipId |= ((ESP.getEfuseMac() >> (40 - i)) & 0xff) << i;
+  }
+  String idstring = "ID: " + String(chipId);
+  Serial.println(idstring + "\n");
+  drawTwoLines(8, modelrev.c_str(), 21, idstring.c_str(), 5);
+  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
   //++++++++++++++++ DETECT AND INIT SENSORS ++++++++++++++++++++++++++++++
   Serial.println("Detecting and initializing sensors...\n");
@@ -350,6 +357,7 @@ void loop() {
   int errcount = 0;
   short BMEfails = 0;
   temp = 0.0;
+  float currtemp = 0.0; // used for compensating gas measures
   pre = 0.0;
   hum = 0.0;
   VOC = 0.0;
@@ -365,13 +373,6 @@ void loop() {
   ozone = 0.0;
   MSP = -1; // reset to -1 to distinguish from grey (0)
   //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-  // WAIT BEFORE MEASURING +++++++++++++++++++++++++++++++++++++++++++
-  if (waittime > 0) {
-    Serial.printf("Wait %d min. to begin measuring\n\n", waittime);
-    drawCountdown(waittime * 60, 5, "Pre-wait time...");
-  }
-  //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
   //------------------------------------------------------------------------
@@ -396,7 +397,7 @@ void loop() {
 
     //+++++++++ WAKE UP AND PREHEAT PMS5003 ++++++++++++
     if (PMS_run) {
-      log_i("Waking up and preheating PMS5003 sensor for 45 seconds...");
+      Serial.println("Waking up and preheating PMS5003 sensor for 45 seconds...\n");
       pms.wakeUp();
       drawCountdown(45, 2, "Preheating PMS5003...");
     }
@@ -426,6 +427,7 @@ void loop() {
 
         bmeread = bme680.temperature;
         log_v("Temperature(*C): %.3f", bmeread);
+        currtemp = bmeread;
         temp += bmeread;
 
         bmeread = bme680.pressure / 100.0;
@@ -500,6 +502,7 @@ void loop() {
           continue;
         }
 
+        if (BME_run) micsread[0] = micsread[0] + ((0.04 * (currtemp - 25.0)) * micsread[0]); // compensation based on the current measured temperature
         log_v("CO(ppm): %.3f", micsread[0]);
         MICS_CO += micsread[0];
 
@@ -530,8 +533,8 @@ void loop() {
           errcount++;
           continue;
         }
-        o3read = analogPpmO3Read();
-        log_v("O3(ppm): %.3f", o3read);
+        o3read = analogUgM3O3Read(&currtemp); // based on the current measured temperature
+        log_v("O3(ug/m3): %.3f", o3read);
         ozone += o3read;
 
         break;
@@ -616,7 +619,6 @@ void loop() {
   runs = avg_measurements - O3fails;
   if (O3_run && runs > 0) {
     ozone /= runs;
-    ozone = convertPpmToUgM3(ozone, 48.00);
   } else if (O3_run) {
     ozone = -1;
   }
@@ -715,8 +717,6 @@ void loop() {
         }
         postStr += "&msp=";
         postStr += String(MSP);
-        postStr += "&mac=";
-        postStr += macAdr;
         postStr += "&recordedAt=";
         postStr += recordedAt;
 
@@ -744,8 +744,6 @@ void loop() {
 
         client.stop(); // Stopping the client
 
-        log_d("Printing server answer:\n\n%s\n", answLine.c_str());
-
         // Check server answer
 
         if (answLine.startsWith("HTTP/1.1 201 Created", 0)) {
@@ -754,6 +752,7 @@ void loop() {
           sent_ok = true;
         } else {
           log_e("Server answered with an error! Data not uploaded!\n");
+          log_e("The full answer is:\n%s\n", answLine.c_str());
           drawTwoLines(25, "Serv answ error!", 25, "Data not sent!", 10);
         }
 

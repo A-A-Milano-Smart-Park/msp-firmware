@@ -23,13 +23,12 @@ String floatToComma(float value) { // converts float values in strings with the 
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-float convertPpmToUgM3(float ppm, float mm/*, float T, float P*/) { // calculates ug/m3 from a gas ppm concentration
+float convertPpmToUgM3(float ppm, float mm) { // calculates ug/m3 from a gas ppm concentration
 
   // mm is molar mass and must be g/mol
-  //if (!BME_run) { //if no BME is connected, assume OSHA standard conditions to perform the conversion
+  // using OSHA standard conditions to perform the conversion
   float T = 25.0;
   float P = 1013.25;
-  //}
   const float R = 83.1446261815324; //gas constant (L * hPa * K^−1 * mol^−1)
   float Vm = (R * (T + 273.15)) / P; //molar volume (L * mol^-1)
   return (ppm * 1000) * (mm / Vm);
@@ -63,25 +62,34 @@ bool checkBMESensor() { // checks BME680 status
 
 bool isAnalogO3Connected() { // checks analog ozone sensor status
 
-  int test = analogRead(35);
-  if (test >= 3500) return true;
+  int detect = analogReadMilliVolts(32);
+  log_d("Detect mV: %d", detect);
+  if (detect > 360) return true;
   return false;
 
 }
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-float analogPpmO3Read() { // reads and calculates ozone ppm value from analog ozone sensor
+float analogUgM3O3Read(float *intemp) { // reads and calculates ozone ppm value from analog ozone sensor
 
   int points = 0;
-  for (int i = 0; i < 10; i++) {
-    points += analogRead(32);
+  float T = 25.0; // initialized at OSHA standard conditions for temperature compensation
+  if (BME_run) {
+    T = *intemp; // using current measured temperature
+    log_d("Current measured temperature is %.3f", T);
+  }
+  for (int i = 0; i < 10; i++) { // reading 10 times for good measure
+    int readnow = analogRead(32);
+    log_v("ADC Read is: %d", readnow);
+    points += readnow;
     delay(10);
   }
   points /= 10;
-  int currval = points - 304;
-  if (currval <= 0) return 0.0;
-  return ((float(currval) / 3783.0) * 303.611557) / 1000.0;
+  log_d("ADC Read averaged is: %d", points);
+  points -= o3zeroval;
+  if (points <= 0) return 0.0;
+  return ((points * 2.03552924) * 12.187 * 48) / (273.15 + T); // temperature compensated
 
 }
 
