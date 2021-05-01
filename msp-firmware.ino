@@ -118,7 +118,7 @@ float MICS_NH3 = 0.0;
 
 // Variables for ZE25-O3
 float ozone = 0.0;
-int o3zeroval = 1489; // ozone sensor ADC zero default offset (0.4V to 1.1V range in 12bit resolution at 0dB attenuation)
+int o3zeroval = -1; // ozone sensor ADC zero default offset is 1489, -1 to disable it (0.4V to 1.1V range in 12bit resolution at 0dB attenuation)
 
 // Date and time vars
 String recordedAt = "";

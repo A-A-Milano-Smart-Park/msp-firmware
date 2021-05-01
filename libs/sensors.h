@@ -61,7 +61,8 @@ bool checkBMESensor() { // checks BME680 status
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 bool isAnalogO3Connected() { // checks analog ozone sensor status
-
+  
+  if (o3zeroval == -1) return false; // force detection off by config file, useful for no pulldown resistor cases
   int detect = analogReadMilliVolts(32);
   log_d("Detect mV: %d", detect);
   if (detect > 360) return true;

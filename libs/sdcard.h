@@ -256,7 +256,7 @@ bool checkConfig(const char *configpath) { // verifies the existance of the conf
 
     if (cfgfile) {
       cfgfile.close();
-      appendFile(SD, configpath, "#ssid=;\n#password=;\n#device_id=;\n#wifi_power=17dBm;\n#o3_zero_value=1489;\n#average_measurements=30;\n#average_delay(seconds)=55;\n#sea_level_altitude=122.0;\n#upload_server=;\n\nAccepted wifi_power values are: -1, 2, 5, 7, 8.5, 11, 13, 15, 17, 18.5, 19, 19.5 dBm.\n\nsea_level_altitude is in meters and it must be changed according to the current location of the device. 122.0 meters is the average altitude in Milan, Italy.");
+      appendFile(SD, configpath, "#ssid=;\n#password=;\n#device_id=;\n#wifi_power=17dBm;\n#o3_zero_value=-1;\n#average_measurements=30;\n#average_delay(seconds)=55;\n#sea_level_altitude=122.0;\n#upload_server=;\n\no3_zero_value disables the O3 sensor when set to -1. For normal operation the default offset is 1489\nAccepted wifi_power values are: -1, 2, 5, 7, 8.5, 11, 13, 15, 17, 18.5, 19, 19.5 dBm.\n\nsea_level_altitude is in meters and it must be changed according to the current location of the device. 122.0 meters is the average altitude in Milan, Italy.");
       log_i("New config file with template created!\n");
     } else {
       log_e("Error writing to SD Card!\n");
