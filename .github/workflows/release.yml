@@ -26,6 +26,7 @@ jobs:
         run: make API_SECRET_SALT="${{ secrets.API_SECRET_SALT }}" API_SERVER="${{ secrets.API_SERVER }}" CUSTOM_DEBUG_LEVEL=1
       - name: Download external flashing tools to attach to release
         run: curl -LO https://github.com/espressif/esptool/releases/download/v4.5.1/esptool-v4.5.1-win64.zip && unzip -j esptool-v4.5.1-win64.zip -d esptool-win64
+             curl -LO https://github.com/espressif/esptool/releases/download/v4.5.1/esptool-v4.5.1-macos.zip && unzip -j esptool-v4.5.1-macos.zip -d esptool-macos
       - name: Grab core version
         run: echo "CORE_VERSION=$(make print-core-version)" >> $GITHUB_ENV
       - name: Zip artifacts
@@ -38,9 +39,17 @@ jobs:
             var/build/msp-firmware.ino.bootloader.bin \
             var/packages/esp32/hardware/esp32/${{ env.CORE_VERSION }}/tools/partitions/boot_app0.bin \
             esptool-win64/esptool.exe
+          zip --junk-paths msp-firmware-${{ env.RELEASE_VERSION }}-macos.zip \
+            README.md \
+            scripts/runme-macos \
+            var/build/msp-firmware.ino.bin \
+            var/build/msp-firmware.ino.partitions.bin \
+            var/build/msp-firmware.ino.bootloader.bin \
+            var/packages/esp32/hardware/esp32/${{ env.CORE_VERSION }}/tools/partitions/boot_app0.bin \
+            esptool-macos/esptool
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
           name: Release ${{ env.RELEASE_VERSION }}
-          artifacts: "msp-firmware-${{ env.RELEASE_VERSION }}-win64.zip"
+          artifacts: "msp-firmware-${{ env.RELEASE_VERSION }}-win64.zip, msp-firmware-${{ env.RELEASE_VERSION }}-macos.zip"
           artifactContentType: application/zip
