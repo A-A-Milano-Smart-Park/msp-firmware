@@ -132,6 +132,7 @@ endif
 ifdef LIBRARIES_URLS
 	curl -LO $(LIBRARIES_URLS)
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib install --zip-path v1.0.2.zip
+	rm v1.0.2.zip
 endif
 
 sketch:
