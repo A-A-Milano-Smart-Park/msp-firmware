@@ -16,7 +16,7 @@ LIBRARIES := \
 	SSLClient@1.6.11 \
 	U8g2@2.33.15
 LIBRARIES_URLS := \
-	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library/archive/refs/tags/v1.0.2.zip
+	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library
 
 # The FQBN is the core, followed by the board.
 CORE_NAME := $(shell echo $(CORE) | cut -f1 -d@)
@@ -130,8 +130,7 @@ ifdef LIBRARIES
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib install $(LIBRARIES)
 endif
 ifdef LIBRARIES_URLS
-	curl -LO $(LIBRARIES_URLS)
-	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib install --zip-path v1.0.2.zip
+	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib install --git-url $(LIBRARIES_URLS)
 endif
 
 sketch:
