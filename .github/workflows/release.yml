@@ -52,5 +52,5 @@ jobs:
         uses: ncipollo/release-action@v1
         with:
           name: Release ${{ env.RELEASE_VERSION }}
-          artifacts: "msp-firmware-${{ env.RELEASE_VERSION }}-macos.zip, msp-firmware-${{ env.RELEASE_VERSION }}-win64.zip"
+          artifacts: "msp-firmware-${{ env.RELEASE_VERSION }}-win64.zip, msp-firmware-${{ env.RELEASE_VERSION }}-macos.zip"
           artifactContentType: application/zip
