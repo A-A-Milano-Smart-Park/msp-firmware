@@ -62,16 +62,35 @@ on your build system, along with the
 
 ## Flashing from binary releases (Windows 64bit instructions):
 
-1. Connect the ESP32 board to a USB port on your PC. Check that it's been detected correctly:
-   it should appear as "Silicon Labs CP210x USB to UART Bridge (COMx)" (check in Windows Device Management).
-   If not, download the drivers manually: 
+1. Connect the ESP32 board to a USB port on your PC.
+
+2. Check that it's been detected correctly: it should appear as `Silicon Labs CP210x USB to UART Bridge (COMx)` (check in Windows Device Management).
+   If not, download the drivers manually:
 	+ for Windows 10/11: https://www.silabs.com/documents/public/software/CP210x_Universal_Windows_Driver.zip
 	+ for older Windows versions: https://www.silabs.com/documents/public/software/CP210x_Windows_Drivers.zip
-	
-2. Extract the zip file.
 
-3. Run "runme.bat". The script will automatically scan for the right COM port and then erase, flash and verify the board.
+3. Download the latest release, extract it and run `runme.bat`. The script will automatically scan for the right COM port and then erase, flash and verify the board.
    If it stays on "Connecting..." for too long, hold the "BOOT" button of the ESP32 board and try again.
    If it still doesn't work, try on a different USB port.
 
 4. If it verifies OK, you are done!
+
+## Flashing from binary releases (macOS instructions):
+
+1. Connect the ESP32 board to a USB port on your Mac.
+
+2. Open a Terminal window and type the following command: `ls /dev/cu.*`. Verify that the `/dev/cu.SLAB_USBtoUART` device appears.
+   If not, download the drivers manually
+	+ for macOS: https://www.silabs.com/documents/public/software/Mac_OSX_VCP_Driver.zip
+
+   When installing, you need to authorize them in macOS Security Settings. Check again that the device appears, otherwise disconnect and reconnect the USB cable.
+
+3. Download the latest release, extract it. In the Terminal, move to the Download folder and in the msp-firmware folder (`cd Downloads/msp-firmware*`); then make the `.sh` files executable with these commands: `chmod +x install-pip-esptool.sh` and `chmod +x flash-msp-firmware.sh`.
+
+4. Run the install script with this terminal command: `./install-pip-esptool.sh` (you might need to authorize its execution in macOS Security Settings). This will check if Python3 is installed (it might ask to install Developer Tools: if it does, install them), and it will install pip and the esptool program needed for the flashing process.
+
+5. After the installation is done, run the install script with this terminal command: `./flash-msp-firmware.sh` (you might need to authorize its execution in macOS Security Settings). The script will erase, flash and verify the board.
+   If it stays on "Connecting..." for too long, hold the "BOOT" button of the ESP32 board and try again.
+   If it still doesn't work, try on a different USB port.
+
+6. If it verifies OK, you are done!
