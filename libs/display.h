@@ -13,6 +13,13 @@
 
 #include "icons.h"
 
+static String dspFloatToComma(float value) {  // converts float values in strings with the decimal part separated from the integer part by a comma
+
+  String convert = String(value, 3);
+  convert.replace(".", ",");
+  return convert;
+}
+
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 void drawBoot(String *fwver) { // draws the boot screen on the U8G2 display
@@ -96,7 +103,6 @@ void drawTwoLines(const char message1[], const char message2[], short secdelay) 
   u8g2.setCursor(offset2, 55); u8g2.print(message2);
   u8g2.sendBuffer();
   delay(secdelay * 1000);
-
 }
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -113,38 +119,41 @@ void drawCountdown(short startsec, const char message[]) { // draws a countdown 
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-void drawMeasurements() { // draws measurements on the U8g2 display
+void drawMeasurements(const float _temp, const float _hum, const float _pre, const float _VOC,
+                      const int32_t _PM1, const int32_t _PM25, const int32_t _PM10, const float _MICS_CO, const float _MICS_NO2,
+                      const float _MICS_NH3, const float _ozone
+) { // draws measurements on the U8g2 display
 
   log_i("Printing measurements on display...");
 
   // page 1
   drawScrHead();
-  u8g2.setCursor(5, 28); u8g2.print("Temp:  " + ((BME_run) ? (floatToComma(temp) + "*C") : ""));
-  u8g2.setCursor(5, 39); u8g2.print("Hum:  " + ((BME_run) ? (floatToComma(hum) + "%" ) : ""));
-  u8g2.setCursor(5, 50); u8g2.print("Pre:  " + ((BME_run) ? (floatToComma(pre) + "hPa") : ""));
-  u8g2.setCursor(5, 61); u8g2.print("VOC:  " + ((BME_run) ? (floatToComma(VOC) + "kOhm") : ""));
+  u8g2.setCursor(5, 28); u8g2.print("Temp:  " + ((BME_run) ? (dspFloatToComma(_temp) + "*C") : ""));
+  u8g2.setCursor(5, 39); u8g2.print("Hum:  " + ((BME_run) ? (dspFloatToComma(_hum) + "%" ) : ""));
+  u8g2.setCursor(5, 50); u8g2.print("Pre:  " + ((BME_run) ? (dspFloatToComma(_pre) + "hPa") : ""));
+  u8g2.setCursor(5, 61); u8g2.print("VOC:  " + ((BME_run) ? (dspFloatToComma(_VOC) + "kOhm") : ""));
   u8g2.sendBuffer();
   delay(7000);
 
   // page 2
   drawScrHead();
-  u8g2.setCursor(5, 28); u8g2.print("PM1:  " + ((PMS_run) ? (String(PM1) + "ug/m3") : ""));
-  u8g2.setCursor(5, 39); u8g2.print("PM2,5:  " + ((PMS_run) ? (String(PM25) + "ug/m3") : ""));
-  u8g2.setCursor(5, 50); u8g2.print("PM10:  " + ((PMS_run) ? (String(PM10) + "ug/m3") : ""));
+  u8g2.setCursor(5, 28); u8g2.print("PM1:  " + ((PMS_run) ? (String(_PM1) + "ug/m3") : ""));
+  u8g2.setCursor(5, 39); u8g2.print("PM2,5:  " + ((PMS_run) ? (String(_PM25) + "ug/m3") : ""));
+  u8g2.setCursor(5, 50); u8g2.print("PM10:  " + ((PMS_run) ? (String(_PM10) + "ug/m3") : ""));
   u8g2.sendBuffer();
   delay(5000);
 
   // page 3
   drawScrHead();
-  u8g2.setCursor(5, 28); u8g2.print("CO:  " + ((MICS_run) ? (floatToComma(MICS_CO) + "ug/m3") : ""));
-  u8g2.setCursor(5, 39); u8g2.print("NOx:  " + ((MICS_run) ? (floatToComma(MICS_NO2) + "ug/m3") : ""));
-  u8g2.setCursor(5, 50); u8g2.print("NH3:  " + ((MICS_run) ? (floatToComma(MICS_NH3) + "ug/m3") : ""));
+  u8g2.setCursor(5, 28); u8g2.print("CO:  " + ((MICS_run) ? (dspFloatToComma(_MICS_CO) + "ug/m3") : ""));
+  u8g2.setCursor(5, 39); u8g2.print("NOx:  " + ((MICS_run) ? (dspFloatToComma(_MICS_NO2) + "ug/m3") : ""));
+  u8g2.setCursor(5, 50); u8g2.print("NH3:  " + ((MICS_run) ? (dspFloatToComma(_MICS_NH3) + "ug/m3") : ""));
   u8g2.sendBuffer();
   delay(5000);
 
   // page 4
   drawScrHead();
-  u8g2.setCursor(5, 39); u8g2.print("O3:  " + ((O3_run) ? (floatToComma(ozone) + "ug/m3") : ""));
+  u8g2.setCursor(5, 39); u8g2.print("O3:  " + ((O3_run) ? (dspFloatToComma(_ozone) + "ug/m3") : ""));
   u8g2.sendBuffer();
   delay(3000);
   
