@@ -11,6 +11,23 @@
 #ifndef SENSORS_H
 #define SENSORS_H
 
+#include "network.h"
+
+typedef enum __SENSOR_STATUS_ARRAY__ {
+  SENS_STAT_BME680    = 0,  // BME680 sensor status
+  SENS_STAT_PMS5003   = 1,    // PMS5003 sensor status
+  SENS_STAT_MICS6814  = 2,   // MICS6814 sensor status
+  SENS_STAT_O3        = 3,         // Ozone sensor status
+  SENS_STAT_MAX       = 4
+} sens_status_t;
+
+typedef enum __MSP_ELEMENT_INDEX__ {
+  MSP_INDEX_PM25  = 0,  // PM2.5 index
+  MSP_INDEX_NO2   = 1,       // NO2 index
+  MSP_INDEX_O3    = 2,        // O3 index
+  MSP_INDEX_MAX   = 3
+} msp_index_t;
+
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 String floatToComma(float value) {  // converts float values in strings with the decimal part separated from the integer part by a comma
@@ -130,39 +147,45 @@ bool checkMicsValues() {  // check if MICS6814 internal values are the same as f
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-void printMeasurementsOnSerial() {
+void printMeasurementsOnSerial(send_data_t *data) {
+
+  char locDate[11] = {0};
+  char locTime[9] = {0};
+
+  strftime(locDate, sizeof(locDate), "%d/%m/%Y", &data->sendTimeInfo);  // Formatting date as DD/MM/YYYY
+  strftime(locTime, sizeof(locDate), "%T", &data->sendTimeInfo);        // Formatting time as HH:MM:SS
 
   Serial.println("Measurements log:\n");  // Log measurements to serial output
-  Serial.println("Date&time: " + String(Date) + " " + String(Time) + "\n");
+  Serial.println("Date&time: " + String(locDate) + " " + String(locTime) + "\n");
   if (BME_run) {
-    Serial.println("Temperature: " + floatToComma(temp) + "°C");
-    Serial.println("Humidity: " + floatToComma(hum) + "%");
-    Serial.println("Pressure: " + floatToComma(pre) + "hPa");
-    Serial.println("VOC: " + floatToComma(VOC) + "kOhm");
+    Serial.println("Temperature: " + floatToComma(data->temp) + "°C");
+    Serial.println("Humidity: " + floatToComma(data->hum) + "%");
+    Serial.println("Pressure: " + floatToComma(data->pre) + "hPa");
+    Serial.println("VOC: " + floatToComma(data->VOC) + "kOhm");
   }
   if (PMS_run) {
-    Serial.println("PM10: " + String(PM10) + "ug/m3");
-    Serial.println("PM2,5: " + String(PM25) + "ug/m3");
-    Serial.println("PM1: " + String(PM1) + "ug/m3");
+    Serial.println("PM10: " + String(data->PM10) + "ug/m3");
+    Serial.println("PM2,5: " + String(data->PM25) + "ug/m3");
+    Serial.println("PM1: " + String(data->PM1) + "ug/m3");
   }
   if (O3_run) {
-    Serial.println("O3: " + floatToComma(ozone) + "ug/m3");
+    Serial.println("O3: " + floatToComma(data->ozone) + "ug/m3");
   }
   if (MICS_run) {
-    Serial.println("NOx: " + floatToComma(MICS_NO2) + "ug/m3");
-    Serial.println("CO: " + floatToComma(MICS_CO) + "ug/m3");
-    Serial.println("NH3: " + floatToComma(MICS_NH3) + "ug/m3");
+    Serial.println("NOx: " + floatToComma(data->MICS_NO2) + "ug/m3");
+    Serial.println("CO: " + floatToComma(data->MICS_CO) + "ug/m3");
+    Serial.println("NH3: " + floatToComma(data->MICS_NH3) + "ug/m3");
   }
   Serial.println();
 }
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-void performAverages(short BMEfails, short PMSfails, short MICSfails, short O3fails, bool senserrs[4]) {
+void performAverages(const short BMEfails, const short PMSfails, const short MICSfails, const short O3fails, bool *senserrs, const short number_of_measurements) {
 
   log_i("Performing averages...\n");
 
-  short runs = avg_measurements - BMEfails;
+  short runs = number_of_measurements - BMEfails;
   if (BME_run && runs > 0) {
     temp /= runs;
     pre /= runs;
@@ -170,90 +193,90 @@ void performAverages(short BMEfails, short PMSfails, short MICSfails, short O3fa
     VOC /= runs;
   } else if (BME_run) {
     BME_run = false;
-    senserrs[0] = true;
+    senserrs[SENS_STAT_BME680] = true;
   }
 
-  runs = avg_measurements - PMSfails;
+  runs = number_of_measurements - PMSfails;
   if (PMS_run && runs > 0) {
-    float b = 0.0;
+    float b = 0.0f;
     b = PM1 / runs;
-    if (b - int(b) >= 0.5) {
+    if (b - int(b) >= 0.5f) {
       PM1 = int(b) + 1;
     } else {
       PM1 = int(b);
     }
     b = PM25 / runs;
-    if (b - int(b) >= 0.5) {
+    if (b - int(b) >= 0.5f) {
       PM25 = int(b) + 1;
     } else {
       PM25 = int(b);
     }
     b = PM10 / runs;
-    if (b - int(b) >= 0.5) {
+    if (b - int(b) >= 0.5f) {
       PM10 = int(b) + 1;
     } else {
       PM10 = int(b);
     }
   } else if (PMS_run) {
     PMS_run = false;
-    senserrs[1] = true;
+    senserrs[SENS_STAT_PMS5003] = true;
   }
 
-  runs = avg_measurements - MICSfails;
+  runs = number_of_measurements - MICSfails;
   if (MICS_run && runs > 0) {
     MICS_CO /= runs;
     MICS_NO2 /= runs;
     MICS_NH3 /= runs;
   } else if (MICS_run) {
     MICS_run = false;
-    senserrs[2] = true;
+    senserrs[SENS_STAT_MICS6814] = true;
   }
 
-  runs = avg_measurements - O3fails;
+  runs = number_of_measurements - O3fails;
   if (O3_run && runs > 0) {
     ozone /= runs;
   } else if (O3_run) {
     O3_run = false;
-    senserrs[3] = true;
+    senserrs[SENS_STAT_O3] = true;
   }
 
 }
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-short evaluateMSPIndex(float pm25, float nox, float o3) {  // evaluates the MSP# index from ug/m3 concentrations of specific gases using standard IAQ values (needs 1h averages)
+short evaluateMSPIndex(const float pm25, const float nox, const float o3) {  // evaluates the MSP# index from ug/m3 concentrations of specific gases using standard IAQ values (needs 1h averages)
 
   // possible returned values are: 0 -> n.d.(grey); 1 -> good(green); 2 -> acceptable(yellow); 3 -> bad(red); 4 -> really bad(black)
   log_i("Evaluating MSP# index...\n");
 
-  short msp[3] = { 0, 0, 0 };  // msp[0] is for pm2.5, msp[1] is for nox, msp[2] is for o3
+  short msp[MSP_INDEX_MAX] = { 0, 0, 0 };  // msp[0] is for pm2.5, msp[1] is for nox, msp[2] is for o3
 
   if (PMS_run) {
-    if (pm25 > 50) msp[0] = 4;
-    else if (pm25 > 25) msp[0] = 3;
-    else if (pm25 > 10) msp[0] = 2;
-    else msp[0] = 1;
+    if (pm25 > 50) msp[MSP_INDEX_PM25] = 4;
+    else if (pm25 > 25) msp[MSP_INDEX_PM25] = 3;
+    else if (pm25 > 10) msp[MSP_INDEX_PM25] = 2;
+    else msp[MSP_INDEX_PM25] = 1;
   }
   if (MICS_run) {
-    if (nox > 400) msp[1] = 4;
-    else if (nox > 200) msp[1] = 3;
-    else if (nox > 100) msp[1] = 2;
-    else msp[1] = 1;
+    if (nox > 400) msp[MSP_INDEX_NO2] = 4;
+    else if (nox > 200) msp[MSP_INDEX_NO2] = 3;
+    else if (nox > 100) msp[MSP_INDEX_NO2] = 2;
+    else msp[MSP_INDEX_NO2] = 1;
   }
   if (O3_run) {
-    if (o3 > 240) msp[2] = 4;
-    else if (o3 > 180) msp[2] = 3;
-    else if (o3 > 120) msp[2] = 2;
-    else msp[2] = 1;
+    if (o3 > 240) msp[MSP_INDEX_O3] = 4;
+    else if (o3 > 180) msp[MSP_INDEX_O3] = 3;
+    else if (o3 > 120) msp[MSP_INDEX_O3] = 2;
+    else msp[MSP_INDEX_O3] = 1;
   }
 
-  if (msp[0] > 0 && msp[1] > 0 && msp[2] > 0 && (msp[0] == msp[1] || msp[0] == msp[2] || msp[1] == msp[2])) {  //return the most dominant
-    if (msp[1] == msp[2]) return msp[1];
-    else return msp[0];
+  if ((msp[MSP_INDEX_PM25] > 0) && (msp[MSP_INDEX_NO2] > 0) && (msp[MSP_INDEX_O3] > 0) && ((msp[MSP_INDEX_PM25] == msp[MSP_INDEX_NO2]) || (msp[MSP_INDEX_PM25] == msp[MSP_INDEX_O3]) || (msp[MSP_INDEX_NO2] == msp[MSP_INDEX_O3]))) {  //return the most dominant
+    if (msp[MSP_INDEX_NO2] == msp[MSP_INDEX_O3]) return msp[MSP_INDEX_NO2];
+    else return msp[MSP_INDEX_PM25];
   } else {  // return the worst one
-    if (msp[0] > msp[1] && msp[0] > msp[2]) return msp[0];
-    else if (msp[1] > msp[2]) return msp[1];
-    else return msp[2];
+    if ((msp[MSP_INDEX_PM25] > msp[MSP_INDEX_NO2]) && (msp[MSP_INDEX_PM25] > msp[MSP_INDEX_O3])) return msp[MSP_INDEX_PM25];
+    else if (msp[MSP_INDEX_NO2] > msp[MSP_INDEX_O3]) return msp[MSP_INDEX_NO2];
+    else return msp[MSP_INDEX_O3];
   }
 }
 
