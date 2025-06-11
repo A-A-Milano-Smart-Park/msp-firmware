@@ -12,8 +12,13 @@
 #compensation_factors=compH:0.6,compT:1.352,compP:0.0132;
 #use_modem=false;
 #modem_apn=;
+#ntp_server=pool.ntp.org;
+#timezone=GMT0;
+
 
 Accepted wifi_power values are: -1, 2, 5, 7, 8.5, 11, 13, 15, 17, 18.5, 19, 19.5 dBm.
 
 sea_level_altitude is in meters and it must be changed according to the current location of the device. 122.0 meters is the average altitude in Milan, Italy.
 
+The timezone follows the standard definition in the tz timezone.
+More details at https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html

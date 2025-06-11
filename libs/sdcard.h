@@ -11,6 +11,8 @@
 #ifndef SDCARD_H
 #define SDCARD_H
 
+#include "network.h"
+
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 bool initializeSD() { // checks for SD Card presence and type
@@ -47,7 +49,7 @@ bool initializeSD() { // checks for SD Card presence and type
 
 bool parseConfig(File fl) { // parses the configuration file on the SD Card
 
-#define LINES 14
+#define LINES 16
 
   bool outcome = true;
   String command[LINES];
@@ -260,6 +262,30 @@ bool parseConfig(File fl) { // parses the configuration file on the SD Card
   }
   log_i("apn = *%s*\n", apn.c_str());
   if (use_modem && apn.length() == 0) outcome = false;
+  line_cnt++;
+  // Timezone and NTP server
+  if (command[line_cnt].startsWith("ntp_server", 0)) {
+    ntp_server = command[line_cnt].substring(command[line_cnt].indexOf('=') + 1, command[line_cnt].length());
+    if (ntp_server.length() == 0) {
+      log_e("NTP_SERVER value is empty! Use default value: pool.ntp.org");
+    } else {
+      log_i("ntp_server = *%s*", ntp_server.c_str());
+    }
+  } else {
+    log_e("Error parsing NTP_SERVER line!");
+  }
+  line_cnt++;
+  if (command[line_cnt].startsWith("timezone", 0)) {
+    timezone = command[line_cnt].substring(command[line_cnt].indexOf('=') + 1, command[line_cnt].length());
+    if (timezone.length() == 0) {
+      log_e("TIMEZONE value is empty! Use default value: CET-1CEST");
+    } else {
+      log_i("timezone = *%s*", timezone.c_str());
+    }
+  } else {
+    log_e("Error parsing TIMEZONE line!");
+  }
+  
 
   return outcome;
 
@@ -290,27 +316,29 @@ bool checkConfig(const char *configpath) { // verifies the existance of the conf
 
     if (cfgfile) {
       // template for default config file
-      String conftemplate = "#ssid=;\n#password=;\n#device_id=;\n#wifi_power=";
-      conftemplate += "17dBm";
-      conftemplate += ";\n#o3_zero_value=";
-      conftemplate += String(o3zeroval);
-      conftemplate += ";\n#average_measurements=";
-      conftemplate += String(avg_measurements);
-      conftemplate += ";\n#average_delay(seconds)=";
-      conftemplate += String(avg_delay);
-      conftemplate += ";\n#sea_level_altitude=";
-      conftemplate += String(sealevelalt);
-      conftemplate += ";\n#upload_server=;\n#mics_calibration_values=";
-      conftemplate += "RED:" + String(MICSCal[0]) + ",OX:" + String(MICSCal[1]) + ",NH3:" + String(MICSCal[2]);
-      conftemplate += ";\n#mics_measurements_offsets=";
-      conftemplate += "RED:" + String(MICSOffset[0]) + ",OX:" + String(MICSOffset[1]) + ",NH3:" + String(MICSOffset[2]);
-      conftemplate += ";\n#compensation_factors=";
-      conftemplate += "compH:" + String(compH, 1) + ",compT:" + String(compT, 3) + ",compP:" + String(compP, 4);
-      conftemplate += ";\n#use_modem=";
-      conftemplate += (use_modem) ? "true" : "false";
-      conftemplate += ";\n#modem_apn=";
-      conftemplate += ";\n\nAccepted wifi_power values are: -1, 2, 5, 7, 8.5, 11, 13, 15, 17, 18.5, 19, 19.5 dBm.\n";
-      conftemplate += "\nsea_level_altitude is in meters and it must be changed according to the current location of the device. 122.0 meters is the average altitude in Milan, Italy.\n";
+      String conftemplate =
+        "#ssid=;\n"
+        "#password=;\n"
+        "#device_id=;\n"
+        "#wifi_power=17dBm;\n"
+        "#o3_zero_value=" + String(o3zeroval) + ";\n"
+        "#average_measurements=" + String(avg_measurements) + ";\n"
+        "#average_delay(seconds)=" + String(avg_delay) + ";\n"
+        "#sea_level_altitude=" + String(sealevelalt) + ";\n"
+        "#upload_server=;\n"
+        "#mics_calibration_values=RED:" + String(MICSCal[0]) + ",OX:" + String(MICSCal[1]) + ",NH3:" + String(MICSCal[2]) + ";\n"
+        "#mics_measurements_offsets=RED:" + String(MICSOffset[0]) + ",OX:" + String(MICSOffset[1]) + ",NH3:" + String(MICSOffset[2]) + ";\n"
+        "#compensation_factors=compH:" + String(compH, 1) + ",compT:" + String(compT, 3) + ",compP:" + String(compP, 4) + ";\n"
+        "#use_modem=" + String(use_modem ? "true" : "false") + ";\n"
+        "#modem_apn=;\n"
+        "#ntp_server=pool.ntp.org;\n"
+        "#timezone=CET-1CEST;\n"
+        "\n"
+        "Accepted wifi_power values are: -1, 2, 5, 7, 8.5, 11, 13, 15, 17, 18.5, 19, 19.5 dBm.\n"
+        "\n"
+        "sea_level_altitude is in meters and it must be changed according to the current location of the device. 122.0 meters is the average altitude in Milan, Italy.\n"
+        "The timezone follows the standard definition in the tz timezone.\n"
+        "More details at https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html";
       cfgfile.println(conftemplate);
       log_i("New config file with template created!\n");
       cfgfile.close();
@@ -393,13 +421,16 @@ bool addToLog(const char *path, const char *oldpath, const char *errpath, String
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-void logToSD() { // builds a new logfile line and calls addToLog() (using logpath global var) to add it
+void logToSD(send_data_t *data) { // builds a new logfile line and calls addToLog() (using logpath global var) to add it
 
   log_i("Logging data to the .csv on the SD Card...\n");
 
+  strftime(Date, sizeof(Date), "%d/%m/%Y", &data->sendTimeInfo);  // Formatting date as DD/MM/YYYY
+  strftime(Time, sizeof(Time), "%T", &data->sendTimeInfo);        // Formatting time as HH:MM:SS
+
   String logvalue = "";
   char timeFormat[29] = {0};
-  if (datetime_ok) strftime(timeFormat, sizeof(timeFormat), "%Y-%m-%dT%T.000Z", &timeinfo); // formatting date&time in TZ format
+  if (datetime_ok) strftime(timeFormat, sizeof(timeFormat), "%Y-%m-%dT%T.000Z", &data->sendTimeInfo); // formatting date&time in TZ format
   
   // Data is layed out as follows:
   // "sent_ok?;recordedAt;date;time;temp;hum;PM1;PM2_5;PM10;pres;radiation;nox;co;nh3;o3;voc;msp"
@@ -413,51 +444,51 @@ void logToSD() { // builds a new logfile line and calls addToLog() (using logpat
   logvalue += String(Time);
   logvalue += ";";
   if (BME_run) {
-    logvalue += floatToComma(temp);
+    logvalue += floatToComma(data->temp);
   }
   logvalue += ";";
   if (BME_run) {
-    logvalue += floatToComma(hum);
+    logvalue += floatToComma(data->hum);
   }
   logvalue += ";";
   if (PMS_run) {
-    logvalue += String(PM1);
+    logvalue += String(data->PM1);
   }
   logvalue += ";";
   if (PMS_run) {
-    logvalue += String(PM25);
+    logvalue += String(data->PM25);
   }
   logvalue += ";";
   if (PMS_run) {
-    logvalue += String(PM10);
+    logvalue += String(data->PM10);
   }
   logvalue += ";";
   if (BME_run) {
-    logvalue += floatToComma(pre);
+    logvalue += floatToComma(data->pre);
   }
   logvalue += ";";
   logvalue += ";"; // for "radiation"
   if (MICS_run) {
-    logvalue += floatToComma(MICS_NO2);
+    logvalue += floatToComma(data->MICS_NO2);
   }
   logvalue += ";";
   if (MICS_run) {
-    logvalue += floatToComma(MICS_CO);
+    logvalue += floatToComma(data->MICS_CO);
   }
   logvalue += ";";
   if (MICS_run) {
-    logvalue += floatToComma(MICS_NH3);
+    logvalue += floatToComma(data->MICS_NH3);
   }
   logvalue += ";";
   if (O3_run) {
-    logvalue += floatToComma(ozone);
+    logvalue += floatToComma(data->ozone);
   }
   logvalue += ";";
   if (BME_run) {
-    logvalue += floatToComma(VOC);
+    logvalue += floatToComma(data->VOC);
   }
   logvalue += ";";
-  logvalue += String(MSP);
+  logvalue += String(data->MSP);
 
   String oldlogpath = logpath + ".old";
   String errorpath = "logerror_" + String(timeFormat) + ".txt";
@@ -486,11 +517,11 @@ void readSD() {
       log_e("No server URL defined. Can't upload data!\n");
       drawTwoLines("No URL defined!", "No upload!", 6);
     }
-    if (avg_delay < 50) {
-      log_e("AVG_DELAY should be at least 50 seconds! Setting to 50...\n");
-      drawTwoLines("AVG_DELAY less than 50!", "Setting to 50...", 5);
-      avg_delay = 50; // must be at least 45 for PMS5003 compensation routine, 5 seconds extra for reading cycle messages
-    }
+    // if (avg_delay < 50) {
+    //   log_e("AVG_DELAY should be at least 50 seconds! Setting to 50...\n");
+    //   drawTwoLines("AVG_DELAY less than 50!", "Setting to 50...", 5);
+    //   avg_delay = 50; // must be at least 45 for PMS5003 compensation routine, 5 seconds extra for reading cycle messages
+    // }
     // setting the logpath variable
     logpath = "/log_" + deviceid + "_" + ver + ".csv";
     // checking logfile existance
