@@ -11,6 +11,24 @@
 #ifndef NETWORK_H
 #define NETWORK_H
 
+#include "display.h"
+
+typedef struct __SEND_DATA__ {
+  struct tm sendTimeInfo;  /*!< Date and time of the data to be sent */
+  float temp;
+  float hum;
+  float pre;
+  float VOC;
+  int32_t PM1;
+  int32_t PM25;
+  int32_t PM10;
+  float MICS_CO;
+  float MICS_NO2;
+  float MICS_NH3;
+  float ozone;
+  int8_t MSP; /*!< MSP# Index */
+} send_data_t;
+
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 void printWiFiMACAddr() {
@@ -196,12 +214,13 @@ bool connectModem() {
 }
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#define TIME_SYNC_MAX_RETRY 5
 
 void connAndGetTime() {  // connects to the internet and retrieves time from NTP server
 
   datetime_ok = false;  // resetting the date&time var
   if (!use_modem) {
-    configTime(0, 0, "pool.ntp.org", "time.nist.gov");  // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2)
+    configTime(0, 0, ntp_server.c_str());  // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2)
     Serial.println("Connecting to WiFi...\n");
     drawTwoLines("Connecting to", "WiFi...", 1);
     connected_ok = connectWiFi();
@@ -213,15 +232,28 @@ void connAndGetTime() {  // connects to the internet and retrieves time from NTP
   if (connected_ok) {
     Serial.println("Retrieving date&time...");
     drawTwoLines("Getting date&time...", "Please wait...", 1);
+    String tzRule = timezone;  // timezone rule
+    if (tzRule.length() == 0) {
+      log_e("TIMEZONE value is empty! Use default value: CET-1CEST");
+      tzRule = "CET-1CEST";  // Default timezone rule
+    } else {
+      log_i("TIMEZONE = *%s*", tzRule.c_str());
+    }
+    setenv("TZ", tzRule.c_str(), 1);  // Setting timezone
+    tzset();  // Apply timezone settings
+    int8_t timeSyncRetries = TIME_SYNC_MAX_RETRY;  // Number of retries for time synchronization
+
     auto start = millis();
-    while (!datetime_ok) {  // Retrieving date&time
+    while ((!datetime_ok) || (timeSyncRetries >= 0)) {  // Retrieving date&time
+      timeSyncRetries--;
       auto timeout = millis() - start;
       if (!use_modem) {
         datetime_ok = getLocalTime(&timeinfo);
       } else {
+        // TODO: review the modem NTP sync
         int hh = 0, mm = 0, ss = 0, yyyy = 0, mon = 0, day = 0;
         float tz = 0;
-        modem.NTPServerSync("pool.ntp.org", 0);
+        modem.NTPServerSync(ntp_server, 0);
         datetime_ok = modem.getNetworkTime(&yyyy, &mon, &day, &hh, &mm, &ss, &tz);
         timeinfo.tm_hour = hh;
         timeinfo.tm_min = mm;
@@ -233,6 +265,7 @@ void connAndGetTime() {  // connects to the internet and retrieves time from NTP
       }
       if (timeout > 90000) break;
     }
+
     if (datetime_ok) {
       drawTwoLines("Getting date&time...", "OK!", 1);
       strftime(Date, sizeof(Date), "%d/%m/%Y", &timeinfo);  // Formatting date as DD/MM/YYYY
@@ -251,15 +284,19 @@ void connAndGetTime() {  // connects to the internet and retrieves time from NTP
 
 //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-void connectToServer(SSLClient *client) {
+void connectToServer(SSLClient *client, send_data_t *dataToBeSent) {
 
-  time_t epochTime = mktime(&timeinfo);  // converting UTC date&time in UNIX Epoch Time format
+  time_t epochTime = mktime(&dataToBeSent->sendTimeInfo);  // converting UTC date&time in UNIX Epoch Time format
 
   client->setVerificationTime((epochTime / 86400UL) + 719528UL, epochTime % 86400UL);  // setting SLLClient's verification time to current time while converting UNIX Epoch Time to BearSSL's expected format
 
   auto start = millis();  // time for connection
   Serial.println("Uploading data to server through HTTPS in progress...\n");
-  drawTwoLines("Uploading data", "to server...", 0);
+  // drawTwoLines("Uploading data", "to server...", 0);
+
+  log_i("Connecting to %s...\n", server.c_str());
+  log_i("Device ID: %s\n", deviceid.c_str());
+  log_i("api_secret_salt: %s\n", api_secret_salt.c_str());
 
   short retries = 0;
   while (retries < 4) {
@@ -269,36 +306,36 @@ void connectToServer(SSLClient *client) {
       String postStr = "X-MSP-ID=" + deviceid;
       if (BME_run) {
         postStr += "&temp=";
-        postStr += String(temp, 3);
+        postStr += String(dataToBeSent->temp, 3);
         postStr += "&hum=";
-        postStr += String(hum, 3);
+        postStr += String(dataToBeSent->hum, 3);
         postStr += "&pre=";
-        postStr += String(pre, 3);
+        postStr += String(dataToBeSent->pre, 3);
         postStr += "&voc=";
-        postStr += String(VOC, 3);
+        postStr += String(dataToBeSent->VOC, 3);
       }
       if (MICS_run) {
         postStr += "&cox=";
-        postStr += String(MICS_CO, 3);
+        postStr += String(dataToBeSent->MICS_CO, 3);
         postStr += "&nox=";
-        postStr += String(MICS_NO2, 3);
+        postStr += String(dataToBeSent->MICS_NO2, 3);
         postStr += "&nh3=";
-        postStr += String(MICS_NH3, 3);
+        postStr += String(dataToBeSent->MICS_NH3, 3);
       }
       if (PMS_run) {
         postStr += "&pm1=";
-        postStr += String(PM1);
+        postStr += String(dataToBeSent->PM1);
         postStr += "&pm25=";
-        postStr += String(PM25);
+        postStr += String(dataToBeSent->PM25);
         postStr += "&pm10=";
-        postStr += String(PM10);
+        postStr += String(dataToBeSent->PM10);
       }
       if (O3_run) {
         postStr += "&o3=";
-        postStr += String(ozone, 3);
+        postStr += String(dataToBeSent->ozone, 3);
       }
       postStr += "&msp=";
-      postStr += String(MSP);
+      postStr += String(dataToBeSent->MSP);
       postStr += "&recordedAt=";
       postStr += String(epochTime);
 
@@ -324,12 +361,12 @@ void connectToServer(SSLClient *client) {
       // Check server answer
       if (answLine.startsWith("HTTP/1.1 201 Created", 0)) {
         log_i("Server answer ok! Data uploaded successfully!\n");
-        drawTwoLines("Data uploaded", "successfully!", 2);
+        // drawTwoLines("Data uploaded", "successfully!", 2);
         sent_ok = true;
       } else {
         log_e("Server answered with an error! Data not uploaded!\n");
         log_e("The full answer is:\n%s\n", answLine.c_str());
-        drawTwoLines("Serv answ error!", "Data not sent!", 10);
+        // drawTwoLines("Serv answ error!", "Data not sent!", 10);
       }
       break;  // exit
 
@@ -343,7 +380,7 @@ void connectToServer(SSLClient *client) {
         log_i("Trying again, %d retries left...\n", 3 - retries);
         mesg = String(3 - retries) + " retries left...";
       }
-      drawTwoLines("Serv conn error!", mesg.c_str(), 10);
+      // drawTwoLines("Serv conn error!", mesg.c_str(), 10);
       retries++;
     }
   }
