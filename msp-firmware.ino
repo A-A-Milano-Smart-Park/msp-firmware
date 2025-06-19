@@ -458,13 +458,17 @@ void setup() {
 //*******************************************************************************************************************************
 
 // sendData task function
-void sendDataTask(void *pvParameters) {
+void sendDataTask(void *pvParameters)
+{
   send_data_t data;
-  while (1) {
+  while (1)
+  {
 
-    if (dequeueSendData(&data, portMAX_DELAY)) {
+    if (dequeueSendData(&data, portMAX_DELAY))
+    {
       // Connect and send data to the server
-      if (server_ok && connected_ok && datetime_ok) {
+      if (server_ok && connected_ok && datetime_ok)
+      {
         connectToServer((use_modem) ? &gsmclient : &wificlient, &data);
       }
 
@@ -534,9 +538,9 @@ void loop()
         else
         {
           char firstRow[17] = {0};
-          char secondRow[17] = {0};
-          sprintf(firstRow, "meas:%d of %d\0", measurement_count , avg_measurements);
-          sprintf(secondRow, "WAIT %02d:%02d min\0", (delay_between_measurements - timeout_seconds) / 60, (delay_between_measurements - timeout_seconds) % 60);
+          char secondRow[22] = {0};
+          sprintf(firstRow, "meas:%d of %d", measurement_count , avg_measurements);
+          sprintf(secondRow, "WAIT %02d:%02d min", (delay_between_measurements - timeout_seconds) / 60, (delay_between_measurements - timeout_seconds) % 60);
           drawTwoLines(firstRow, secondRow, 0);
           delay(500);
         }

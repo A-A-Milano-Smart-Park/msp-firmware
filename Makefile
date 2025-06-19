@@ -1,4 +1,4 @@
-ARDUINO_CLI_VERSION := 0.35.3
+ARDUINO_CLI_VERSION := 1.2.2
 ARDUINO_CLI_URL := https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh
 ARDUINO_LINT_VERSION := 1.2.1
 ARDUINO_LINT_URL := https://raw.githubusercontent.com/arduino/arduino-lint/main/etc/install.sh
