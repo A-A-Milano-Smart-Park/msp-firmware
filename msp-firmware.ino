@@ -148,6 +148,14 @@ typedef enum __SYSTEM_STATES__ {
   SYS_STATE_MAX_STATES
 } system_states_t;
 
+typedef enum __MY_NETWORK_EVENTS__ {
+  NET_EVENT_CONNECTED     = (1 << 0), /*!< Network connected event */
+  NET_EVENT_DISCONNECTED  = (1 << 1), /*!< Network disconnected event */
+  //------------------------------
+  NET_EVENT_MAX               /*!< Maximum number of events */
+} net_evt_t;
+
+
 // Sensor active variables
 bool BME_run = false;
 bool PMS_run = false;
@@ -222,6 +230,7 @@ bool sent_ok = false;
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/event_groups.h"
 
 // Task stack size and priority
 #define SEND_DATA_TASK_STACK_SIZE (8*1024) // 8KB stack size for the task
@@ -257,13 +266,6 @@ void initSendDataQueue() {
   }
 }
 
-typedef enum __NETWORK_EVENTS__ {
-  NET_EVENT_CONNECTED     = (1 << 0), /*!< Network connected event */
-  NET_EVENT_DISCONNECTED  = (1 << 1), /*!< Network disconnected event */
-  //------------------------------
-  NET_EVENT_MAX               /*!< Maximum number of events */
-} network_events_t;
-
 EventGroupHandle_t networkEventGroup = NULL;
 StaticEventGroup_t networkEventGroupBuffer; /*!< Static buffer for the event group */
 
@@ -278,30 +280,30 @@ void createNetworkEvents()
   }
 }
 
-BaseType_t sendNetworkEvent(network_events_t event)
+bool sendNetworkEvent(net_evt_t event)
 {
   if (networkEventGroup == NULL) {
     log_e("Network event group not initialized!");
-    return pdFAIL;
+    return false;
   }
-  
-  BaseType_t result = xEventGroupSetBits(networkEventGroup, event);
-  if (result != pdPASS) {
-    log_e("Failed to send network event: %d", event);
-  }
-  return result;
+
+  xEventGroupSetBits(networkEventGroup, event);
+
+  return true;
 }
 
-BaseType_t waitForNetworkEvent(network_events_t event, TickType_t ticksToWait)
+bool waitForNetworkEvent(net_evt_t event, TickType_t ticksToWait)
 {
   if (networkEventGroup == NULL) {
     log_e("Network event group not initialized!");
-    return pdFAIL;
+    return false;
   }
+
+  bool result = true;
   
-  BaseType_t result = xEventGroupWaitBits(networkEventGroup, event, pdTRUE, pdTRUE, ticksToWait);
-  if (result == pdFAIL) {
+  if (xEventGroupWaitBits(networkEventGroup, event, pdTRUE, pdTRUE, ticksToWait) != pdTRUE) {
     log_e("Failed to wait for network event: %d", event);
+    result = false;
   }
   return result;
 }
@@ -356,22 +358,11 @@ void setup()
   
   // Create the network event group
   createNetworkEvents(); 
-  
-  // Initialize the send data task
-  sendDataTaskHandle = xTaskCreateStaticPinnedToCore(
-    sendDataTask,                 // Task function
-    "SendDataTask",               // Name
-    SEND_DATA_TASK_STACK_SIZE,    // Stack size
-    NULL,                         // Parameters
-    SEND_DATA_TASK_PRIORITY,      // Priority
-    sendDataTaskStack,           // Stack buffer
-    &sendDataTaskBuffer,         // Task buffer
-    1                             // Core 1
-  );
 
   // BOOT STRINGS ++++++++++++++++++++++++++++++++++++++++++++++++++++++
   Serial.println("\nMILANO SMART PARK");
   Serial.println("FIRMWARE " + ver + " by Norman Mulinacci");
+  Serial.println("Refactor and optimization by AB-Engineering - https://ab-engineering.it");
   Serial.println("Compiled " + String(__DATE__) + " " + String(__TIME__) + "\n");
   drawBoot(&ver);
 #ifdef VERSION_STRING
@@ -497,9 +488,22 @@ void setup()
   curr_seconds = 0;
   curr_total_seconds = 0;
 
+  // Initialize the send data task
+  sendDataTaskHandle = xTaskCreateStaticPinnedToCore(
+    sendDataTask,                 // Task function
+    "SendDataTask",               // Name
+    SEND_DATA_TASK_STACK_SIZE,    // Stack size
+    NULL,                         // Parameters
+    SEND_DATA_TASK_PRIORITY,      // Priority
+    sendDataTaskStack,           // Stack buffer
+    &sendDataTaskBuffer,         // Task buffer
+    1                             // Core 1
+  );
+
   // CONNECT TO INTERNET AND GET DATE&TIME +++++++++++++++++++++++++++++++++++++++++++++++++++
   if (cfg_ok == true)
   {
+    log_i("Wait for network connection...\n");
     mainStateMachine.current_state = SYS_STATE_UPDATE_DATE_TIME;  // set initial state
     mainStateMachine.next_state = SYS_STATE_UPDATE_DATE_TIME;  // set next state
   }
@@ -517,50 +521,92 @@ void setup()
 //*******************************************************************************************************************************
 //*******************************************************************************************************************************
 
+#define NTP_SYNC_TX_COUNT 100
 // sendData task function
 void sendDataTask(void *pvParameters)
 {
+  log_i("Send Data Task started on core %d", xPortGetCoreID());
   send_data_t data;
   memset(&data, 0, sizeof(send_data_t)); // Initialize the data structure
+  uint8_t isConnectionInited = false;
+  int8_t ntpSyncExpired = NTP_SYNC_TX_COUNT;
   while (1)
   {
-    if (dequeueSendData(&data, portMAX_DELAY))
+    if(isConnectionInited == false)
     {
-      if(connected_ok == false)
+      if (cfg_ok)
       {
-        // We are not connected to the internet, try a new connection
-        if (cfg_ok)
-        {
-          connAndGetTime();
+        log_i("Initializing connection to the network...\n");
+        connAndGetTime();
 
-          if(connected_ok)
+        if(connected_ok)
+        {
+          sendNetworkEvent(NET_EVENT_CONNECTED); // Notify that we are connected
+          isConnectionInited = true; // Set the connection as initialized
+          ntpSyncExpired = NTP_SYNC_TX_COUNT; // Reset the NTP sync counter
+          
+          // If using the modem, disconnect to save GB
+          if(use_modem)
           {
-            sendNetworkEvent(NET_EVENT_CONNECTED); // Notify that we are connected
+            // Disconnect the modem after sending data
+            if(modemDisconnect() == true) connected_ok = false; 
           }
         }
       }
-
-      // Connect and send data to the server
-      if (server_ok && connected_ok && datetime_ok)
+    }
+    else
+    {
+      if (dequeueSendData(&data, portMAX_DELAY))
       {
-        connectToServer((use_modem) ? &gsmclient : &wificlient, &data);
-      }
-
-      Serial.println("Writing log to SD card...");
-      if (SD_ok)
-      {
-        if (checkLogFile())
+        if(connected_ok == false)
         {
-          logToSD(&data);
+          ntpSyncExpired--;
+          // We are not connected to the internet, try a new connection
+          if (cfg_ok)
+          {
+            if(ntpSyncExpired <= 0)
+            {
+              log_i("NTP sync expired, resync...\n");
+              ntpSyncExpired = NTP_SYNC_TX_COUNT; // Reset the NTP sync counter
+              connAndGetTime();
+            }
+            else
+            {
+              log_i("Connect without NTP sync");
+              connectToInternet();
+            }
+            
+
+            if(connected_ok)
+            {
+              sendNetworkEvent(NET_EVENT_CONNECTED); // Notify that we are connected
+            }
+          }
         }
-      }
 
-      // Print measurements to serial and draw them on the display
-      printMeasurementsOnSerial(&data);
+        // Connect and send data to the server
+        if (server_ok && connected_ok && datetime_ok)
+        {
+          connectToServer((use_modem) ? &gsmclient : &wificlient, &data);
+        }
 
-      if(use_modem)
-      {
-        modemDisconnect(); // Disconnect the modem after sending data
+        Serial.println("Writing log to SD card...");
+        if (SD_ok)
+        {
+          if (checkLogFile())
+          {
+            logToSD(&data);
+          }
+        }
+
+        // Print measurements to serial and draw them on the display
+        printMeasurementsOnSerial(&data);
+
+        if(use_modem)
+        {
+          // Disconnect the modem after sending data
+          if(modemDisconnect() == true) connected_ok = false; 
+        }
       }
     }
   }

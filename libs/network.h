@@ -262,7 +262,7 @@ void connAndGetTime()
 { // connects to the internet and retrieves time from NTP server
 
   datetime_ok = false; // resetting the date&time var
-  if (!use_modem)
+  if (use_modem == false)
   {
     configTime(0, 0, ntp_server.c_str()); // configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2)
     Serial.println("Connecting to WiFi...\n");
@@ -294,17 +294,12 @@ void connAndGetTime()
     int8_t timeSyncRetries = TIME_SYNC_MAX_RETRY; // Number of retries for time synchronization
 
     auto start = millis();
-    while ((!datetime_ok) || (timeSyncRetries >= 0))
+    while ((datetime_ok == 0) && (timeSyncRetries >= 0))
     { // Retrieving date&time
       timeSyncRetries--;
       auto timeout = millis() - start;
-      if (!use_modem)
+      if (use_modem == true)
       {
-        datetime_ok = getLocalTime(&timeinfo);
-      }
-      else
-      {
-        // TODO: review the modem NTP sync
         int hh = 0, mm = 0, ss = 0, yyyy = 0, mon = 0, day = 0;
         float tz = 0;
         modem.NTPServerSync(ntp_server, 0);
@@ -316,9 +311,15 @@ void connAndGetTime()
         timeinfo.tm_mon = mon - 1;
         timeinfo.tm_mday = day;
         timeinfo.tm_isdst = -1;
+        time_t t = mktime(&timeinfo);
+        struct timeval now = { .tv_sec = t };
+        settimeofday(&now, NULL);
       }
-      if (timeout > 90000)
-        break;
+      else
+      {
+        datetime_ok = getLocalTime(&timeinfo);
+      }
+      if (timeout > 90000) break;
     }
 
     if (datetime_ok)
@@ -337,6 +338,22 @@ void connAndGetTime()
     }
     Serial.println();
     delay(3000);
+  }
+}
+
+void connectToInternet()
+{
+  if (use_modem == false)
+  {
+    Serial.println("Connecting to WiFi...\n");
+    drawTwoLines("Connecting to", "WiFi...", 1);
+    connected_ok = connectWiFi();
+  }
+  else if ((modem.isNetworkConnected() == false) || (modem.isGprsConnected() == false))
+  { // reconnect only if network is lost
+    Serial.println("Connecting to GPRS...\n");
+    drawTwoLines("Connecting to", "GPRS...", 1);
+    connected_ok = connectModem();
   }
 }
 
