@@ -1,0 +1,6 @@
+{
+    "sketch": "msp-firmware.ino",
+    "port": "/dev/tty.SLAB_USBtoUART",
+    "board": "esp32:esp32:esp32_family",
+    "output": "/var/build"
+}

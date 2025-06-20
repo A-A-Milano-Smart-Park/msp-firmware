@@ -136,11 +136,10 @@ typedef struct __STATE_MACHINE__ {
 } state_machine_t;
 
 // Create a new state machine instance
-state_machine_t mainStateMachine = {0};
+state_machine_t mainStateMachine;
 
 typedef enum __SYSTEM_STATES__ {
   SYS_STATE_WAIT_FOR_TIMEOUT,
-  SYS_STATE_MANAGE_INTERNET_CONNECTION,
   SYS_STATE_READ_SENSORS ,
   SYS_STATE_ERROR,
   SYS_STATE_UPDATE_DATE_TIME,
@@ -235,7 +234,7 @@ TaskHandle_t sendDataTaskHandle = NULL;
 
 void sendDataTask(void *pvParameters);
 
-#define SEND_DATA_QUEUE_LENGTH 2
+#define SEND_DATA_QUEUE_LENGTH 4
 
 QueueHandle_t sendDataQueue = NULL;
 
@@ -256,6 +255,55 @@ void initSendDataQueue() {
   if (sendDataQueue == NULL) {
     sendDataQueue = xQueueCreate(SEND_DATA_QUEUE_LENGTH, sizeof(send_data_t));
   }
+}
+
+typedef enum __NETWORK_EVENTS__ {
+  NET_EVENT_CONNECTED     = (1 << 0), /*!< Network connected event */
+  NET_EVENT_DISCONNECTED  = (1 << 1), /*!< Network disconnected event */
+  //------------------------------
+  NET_EVENT_MAX               /*!< Maximum number of events */
+} network_events_t;
+
+EventGroupHandle_t networkEventGroup = NULL;
+StaticEventGroup_t networkEventGroupBuffer; /*!< Static buffer for the event group */
+
+// Create a series of events to handle the network status connection.
+void createNetworkEvents()
+{
+  networkEventGroup = xEventGroupCreateStatic(&networkEventGroupBuffer);
+  if (networkEventGroup == NULL) {
+    log_e("Failed to create network event group!");
+  } else {
+    log_i("Network event group created successfully.");
+  }
+}
+
+BaseType_t sendNetworkEvent(network_events_t event)
+{
+  if (networkEventGroup == NULL) {
+    log_e("Network event group not initialized!");
+    return pdFAIL;
+  }
+  
+  BaseType_t result = xEventGroupSetBits(networkEventGroup, event);
+  if (result != pdPASS) {
+    log_e("Failed to send network event: %d", event);
+  }
+  return result;
+}
+
+BaseType_t waitForNetworkEvent(network_events_t event, TickType_t ticksToWait)
+{
+  if (networkEventGroup == NULL) {
+    log_e("Network event group not initialized!");
+    return pdFAIL;
+  }
+  
+  BaseType_t result = xEventGroupWaitBits(networkEventGroup, event, pdTRUE, pdTRUE, ticksToWait);
+  if (result == pdFAIL) {
+    log_e("Failed to wait for network event: %d", event);
+  }
+  return result;
 }
 
 //*******************************************************************************************************************************
@@ -282,7 +330,9 @@ int32_t additional_delay = 0;
 //*******************************************************************************************************************************
 //******************************************  S E T U P  ************************************************************************
 //*******************************************************************************************************************************
-void setup() {
+void setup()
+{
+  memset(&mainStateMachine, 0, sizeof(state_machine_t)); // Initialize the state machine structure
 
   // INIT SERIAL, I2C, DISPLAY ++++++++++++++++++++++++++++++++++++
   Serial.begin(115200);
@@ -303,6 +353,9 @@ void setup() {
 
   // Initialize the data queue:
   initSendDataQueue();
+  
+  // Create the network event group
+  createNetworkEvents(); 
   
   // Initialize the send data task
   sendDataTaskHandle = xTaskCreateStaticPinnedToCore(
@@ -445,11 +498,18 @@ void setup() {
   curr_total_seconds = 0;
 
   // CONNECT TO INTERNET AND GET DATE&TIME +++++++++++++++++++++++++++++++++++++++++++++++++++
-  if (cfg_ok) connAndGetTime();
-  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+  if (cfg_ok == true)
+  {
+    mainStateMachine.current_state = SYS_STATE_UPDATE_DATE_TIME;  // set initial state
+    mainStateMachine.next_state = SYS_STATE_UPDATE_DATE_TIME;  // set next state
+  }
+  else
+  {
+    mainStateMachine.current_state = SYS_STATE_ERROR;  // set initial state
+    mainStateMachine.next_state = SYS_STATE_ERROR;  // set next state
+  }
 
-  mainStateMachine.current_state = SYS_STATE_MANAGE_INTERNET_CONNECTION;  // set initial state
-  mainStateMachine.next_state = SYS_STATE_MANAGE_INTERNET_CONNECTION;  // set next state
+  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
   mainStateMachine.isFirstTransition = 1; // set first transition flag
 
 }// end of SETUP
@@ -461,11 +521,25 @@ void setup() {
 void sendDataTask(void *pvParameters)
 {
   send_data_t data;
+  memset(&data, 0, sizeof(send_data_t)); // Initialize the data structure
   while (1)
   {
-
     if (dequeueSendData(&data, portMAX_DELAY))
     {
+      if(connected_ok == false)
+      {
+        // We are not connected to the internet, try a new connection
+        if (cfg_ok)
+        {
+          connAndGetTime();
+
+          if(connected_ok)
+          {
+            sendNetworkEvent(NET_EVENT_CONNECTED); // Notify that we are connected
+          }
+        }
+      }
+
       // Connect and send data to the server
       if (server_ok && connected_ok && datetime_ok)
       {
@@ -483,7 +557,11 @@ void sendDataTask(void *pvParameters)
 
       // Print measurements to serial and draw them on the display
       printMeasurementsOnSerial(&data);
-      // drawMeasurements(data.temp, data.hum, data.pre, data.VOC, data.PM1, data.PM25, data.PM10, data.MICS_CO, data.MICS_NO2, data.MICS_NH3, data.ozone); 
+
+      if(use_modem)
+      {
+        modemDisconnect(); // Disconnect the modem after sending data
+      }
     }
   }
 }
@@ -495,23 +573,20 @@ void loop()
 {
   switch (mainStateMachine.current_state)  // state machine for the main loop
   {
-    
     case SYS_STATE_UPDATE_DATE_TIME:
     {
-      if (cfg_ok) connAndGetTime();
-
-      mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
-      break;
-    }
-
-    case SYS_STATE_MANAGE_INTERNET_CONNECTION:
-    {
-      // DISCONNECTING AND TURNING OFF WIFI ONLY IF MODEM IS USED
-      if (use_modem == true)
+      drawTwoLines("Network", "Wait for connection", 0);
+      if( pdTRUE == waitForNetworkEvent(NET_EVENT_CONNECTED, portMAX_DELAY))
       {
-        disconnectWiFi();
+        mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
       }
-      mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;  // go to next state
+      else
+      {
+        log_e("Failed to connect to the network for date and time update!");
+        drawTwoLines("Network Error", "Failed to connect", 0);
+        mainStateMachine.next_state = SYS_STATE_ERROR;
+      }
+
       break;
     }
 
@@ -898,7 +973,7 @@ void loop()
     {
       log_e("System in error state! Waiting for reset...");
       drawTwoLines("System in error!", "Waiting for reset...", 10);
-      mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;  // go to init vars state
+      vTaskDelay(portMAX_DELAY);
       break;
     }
 

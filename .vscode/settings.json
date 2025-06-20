@@ -1,0 +1,13 @@
+{
+  "files.associations": {
+    "*.tpp": "cpp"
+  },
+  "arduino.useArduinoCli": false,
+  "arduino.logLevel": "info",
+  "arduino.enableUSBDetection": true,
+  "arduino.disableTestingOpen": false,
+  "arduino.skipHeaderProvider": false,
+  "arduino.additionalUrls": [
+      "https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json"
+  ],
+}
