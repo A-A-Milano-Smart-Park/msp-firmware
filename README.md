@@ -10,7 +10,7 @@ The project runs on Espressif's ESP32-DevkitC with ESP32-WROVER-B module
 
 ### Required Core (you can also download it through the Arduino IDE):
 
-- [Arduino core for the ESP32](https://github.com/espressif/arduino-esp32) version 2.0.14
+- [Arduino core for the ESP32](https://github.com/espressif/arduino-esp32) version 2.0.17
     + To download the core through the Arduino IDE, you need to add the following URLs in File -> Settings -> Additional URLs:
     https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
 
@@ -22,6 +22,7 @@ Libraries listed below can be installed through the Arduino IDE Library Manager:
 - [BSEC Arduino library](https://github.com/BoschSensortec/BSEC-Arduino-library) version 1.8.1492
 - [PMS Library](https://github.com/fu-hsi/pms) version 1.1.0
 - [TinyGSM Library](https://github.com/vshymanskyy/TinyGSM) version 0.11.7
+- [ArduinoJson] (https://arduinojson.org/?utm_source=meta&utm_medium=library.properties) version 7.4.2
 
 You will also need to install a modified version of [MiCS6814-I2C-MOD-Library](https://github.com/eNBeWe/MiCS6814-I2C-Library/network) which is not available through the Arduino Library Manager and [must be imported manually](https://www.arduino.cc/en/Guide/Libraries#importing-a-zip-library):
 - [MiCS6814-I2C-MOD-Library](https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library)
