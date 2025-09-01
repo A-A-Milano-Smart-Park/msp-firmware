@@ -1,5 +1,4 @@
 {
     "port": "/dev/tty.SLAB_USBtoUART",
-    "board": "esp32:esp32:esp32",
-    "sketch": "msp-firmware.ino"
+    "board": "esp32:esp32:esp32"
 }
