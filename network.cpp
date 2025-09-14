@@ -28,7 +28,6 @@
 #include "sdcard.h"
 #include "sensors.h"
 #include "config.h"
-#include "shared_values.h"
 #include "firmware_update.h"
 
 // -- Network Configuration Constants
@@ -230,8 +229,12 @@ void initSendDataOp(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetw
         else
         {
             log_i("Network task created successfully");
-            // Mark task as running - no mutex needed (internal to network task)
-            networkState.taskRunning = true;
+            // Mark task as running
+            if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+            {
+                networkState.taskRunning = true;
+                xSemaphoreGive(networkStateMutex);
+            }
         }
     }
 }
@@ -300,8 +303,12 @@ uint8_t vHalNetwork_modemDisconnect()
         log_i("Disconnecting from GPRS...");
         bool result = modem->gprsDisconnect();
 
-        // Update state - no mutex needed (called from network task)
-        networkState.gsmConnected = false;
+        // Update state
+        if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+        {
+            networkState.gsmConnected = false;
+            xSemaphoreGive(networkStateMutex);
+        }
 
         return result ? 1 : 0;
     }
@@ -500,12 +507,16 @@ static void cleanupNetworkResources()
         log_d("Modem cleaned up");
     }
 
-    // Update state - no mutex needed (internal cleanup function)
-    networkState.wifiConnected = false;
-    networkState.gsmConnected = false;
-    networkState.internetConnected = false;
-    networkState.timeSync = false;
-    networkState.connectionRetries = 0;
+    // Update state
+    if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+    {
+        networkState.wifiConnected = false;
+        networkState.gsmConnected = false;
+        networkState.internetConnected = false;
+        networkState.timeSync = false;
+        networkState.connectionRetries = 0;
+        xSemaphoreGive(networkStateMutex);
+    }
 
     log_i("Network resources cleaned up successfully");
 }
@@ -863,11 +874,12 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
         log_i("Time synchronized successfully: %s", sysData->currentDataTime.c_str());
         updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_DATETIME_OK);
 
-        // Update state - successful NTP sync proves internet connectivity
-        // No mutex needed (internal to network task)
-        networkState.timeSync = true;
-        networkState.internetConnected = true; // NTP sync success = internet is working
-        log_i("Internet connectivity confirmed via successful NTP sync");
+        // Update state
+        if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+        {
+            networkState.timeSync = true;
+            xSemaphoreGive(networkStateMutex);
+        }
 
         sysStatus->datetime = true;
         sendNetworkEvent(NET_EVENT_TIME_SYNCED);
@@ -1265,8 +1277,12 @@ static void networkTask(void *pvParameters)
     {
         log_e("Failed to initialize network resources, task exiting");
 
-        // Mark task as not running - no mutex needed (internal task state)
-        networkState.taskRunning = false;
+        // Mark task as not running
+        if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+        {
+            networkState.taskRunning = false;
+            xSemaphoreGive(networkStateMutex);
+        }
 
         vTaskDelete(NULL);
         return;
@@ -1344,18 +1360,7 @@ static void networkTask(void *pvParameters)
             else if (events & NET_EVT_DISCONNECT_REQ)
             {
                 log_i("Disconnect request received");
-
-                // Check if maintenance operations are pending before disconnecting
-                if (isMaintenancePending())
-                {
-                    log_i("Maintenance operations pending - ignoring disconnect request");
-                    log_i("Network will remain connected for firmware updates or NTP sync");
-                }
-                else
-                {
-                    log_i("No maintenance pending - proceeding with disconnect");
-                    updateNetworkState(NETWRK_EVT_DEINIT_CONNECTION);
-                }
+                updateNetworkState(NETWRK_EVT_DEINIT_CONNECTION);
 
                 // Clear the processed event bit
                 xEventGroupClearBits(networkEventGroup, NET_EVT_DISCONNECT_REQ);
@@ -1393,56 +1398,34 @@ static void networkTask(void *pvParameters)
                     log_v("Skipping connectivity test - firmware download in progress");
                 }
 
-                // Update connection status if changed - no mutex needed (internal to network task)
-                if (networkState.wifiConnected != wifiConnected)
+                if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(100)) == pdTRUE)
                 {
-                    networkState.wifiConnected = wifiConnected;
-                    log_i("WiFi connection status changed: %s", wifiConnected ? "connected" : "disconnected");
-                }
-
-                if (networkState.gsmConnected != gsmConnected)
-                {
-                    networkState.gsmConnected = gsmConnected;
-                    log_i("GSM connection status changed: %s", gsmConnected ? "connected" : "disconnected");
-                }
-
-                if (networkState.internetConnected != internetConnected)
-                {
-                    networkState.internetConnected = internetConnected;
-                    log_i("Internet connectivity status changed: %s", internetConnected ? "connected" : "disconnected");
-
-                    // Handle DNS failure recovery - disconnect and reconnect to recover
-                    if (!internetConnected && (wifiConnected || gsmConnected))
+                    // Update connection status if changed
+                    if (networkState.wifiConnected != wifiConnected)
                     {
-                        log_w("Network connected but internet not accessible - DNS issues detected");
-                        log_i("Initiating connection recovery to fix DNS issues...");
+                        networkState.wifiConnected = wifiConnected;
+                        log_i("WiFi connection status changed: %s", wifiConnected ? "connected" : "disconnected");
+                    }
 
-                        // For WiFi: disconnect and trigger reconnection
-                        if (networkState.wifiConnected)
+                    if (networkState.gsmConnected != gsmConnected)
+                    {
+                        networkState.gsmConnected = gsmConnected;
+                        log_i("GSM connection status changed: %s", gsmConnected ? "connected" : "disconnected");
+                    }
+
+                    if (networkState.internetConnected != internetConnected)
+                    {
+                        networkState.internetConnected = internetConnected;
+                        log_i("Internet connectivity status changed: %s", internetConnected ? "connected" : "disconnected");
+
+                        // Alert if network is connected but internet is not accessible (DNS issues)
+                        if (!internetConnected && (wifiConnected || gsmConnected))
                         {
-                            log_i("Disconnecting WiFi to recover from DNS failure");
-                            WiFi.disconnect();
-                            networkState.wifiConnected = false;
-                            sysStatus.connection = false;
-
-                            // Trigger reconnection attempt after short delay
-                            log_i("Will attempt WiFi reconnection to recover DNS");
-                            updateNetworkState(NETWRK_EVT_INIT_CONNECTION);
-                        }
-
-                        // For GSM: disconnect GPRS and trigger reconnection
-                        if (networkState.gsmConnected && modem)
-                        {
-                            log_i("Disconnecting GPRS to recover from DNS failure");
-                            if (modem->gprsDisconnect())
-                            {
-                                networkState.gsmConnected = false;
-                                sysStatus.connection = false;
-                                log_i("GPRS disconnected - will attempt reconnection to recover DNS");
-                                updateNetworkState(NETWRK_EVT_INIT_CONNECTION);
-                            }
+                            log_w("Network connected but internet not accessible - possible DNS issues");
                         }
                     }
+
+                    xSemaphoreGive(networkStateMutex);
                 }
             }
             break;
@@ -1453,16 +1436,25 @@ static void networkTask(void *pvParameters)
             log_i("Initializing network connection...");
             bool connected = false;
 
-            // Check retry limits - no mutex needed (internal to network task)
-            int currentRetries = networkState.connectionRetries;
+            // Check retry limits
+            int currentRetries = 0;
+            if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+            {
+                currentRetries = networkState.connectionRetries;
+                xSemaphoreGive(networkStateMutex);
+            }
 
             if (currentRetries >= MAX_CONNECTION_RETRIES)
             {
                 log_w("Maximum connection retries reached, backing off...");
                 delay(30000); // 30 second backoff
 
-                // Reset retry counter - no mutex needed (internal to network task)
-                networkState.connectionRetries = 0;
+                // Reset retry counter
+                if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+                {
+                    networkState.connectionRetries = 0;
+                    xSemaphoreGive(networkStateMutex);
+                }
             }
 
             if (!sysStatus.use_modem)
@@ -1510,8 +1502,12 @@ static void networkTask(void *pvParameters)
             {
                 log_i("Time synchronization successful");
 
-                // Reset NTP sync counter on successful sync - no mutex needed (internal to network task)
-                networkState.ntpSyncExpired = NTP_SYNC_TX_COUNT;
+                // Reset NTP sync counter on successful sync
+                if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+                {
+                    networkState.ntpSyncExpired = NTP_SYNC_TX_COUNT;
+                    xSemaphoreGive(networkStateMutex);
+                }
             }
             else
             {
@@ -1736,36 +1732,18 @@ static void networkTask(void *pvParameters)
                 memset(&localSensorData, 0, sizeof(sensorData_t));
                 vHalSensor_printMeasurementsOnSerial(&currentData, &localSensorData);
 
-                // Handle network disconnection for power saving and connection health
-                // Check if maintenance operations are pending before disconnecting
-                if (isMaintenancePending())
+                // Handle modem disconnection for power saving
+                if ((sysStatus.use_modem) && ((networkState.gsmConnected) || (modem)))
                 {
-                    log_i("Maintenance operations pending - keeping network connection active");
-                    log_i("Network will remain connected for firmware updates or NTP sync");
-                }
-                else if ((sysStatus.use_modem) && ((networkState.gsmConnected) || (modem)))
-                {
-                    // Always disconnect cellular after transmission for power saving
                     if (vHalNetwork_modemDisconnect())
                     {
-                        // Update state - no mutex needed (internal to network task)
-                        networkState.gsmConnected = false;
+                        if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+                        {
+                            networkState.gsmConnected = false;
+                            xSemaphoreGive(networkStateMutex);
+                        }
                         log_i("Modem disconnected to save power");
                     }
-                }
-                else if (networkState.wifiConnected)
-                {
-                    // For WiFi: disconnect after transmission to ensure connection health
-                    // This helps prevent DNS issues and connection staleness
-                    log_i("Disconnecting WiFi after transmission to maintain connection health");
-                    WiFi.disconnect();
-                    WiFi.mode(WIFI_OFF);
-
-                    // Update state - no mutex needed (internal to network task)
-                    networkState.wifiConnected = false;
-
-                    sysStatus.connection = false;
-                    log_i("WiFi disconnected to maintain connection health");
                 }
 
                 // Small delay between transmissions
@@ -1966,17 +1944,10 @@ bool isInternetConnected()
 {
     bool connected = false;
 
-    // Fast path: try to get mutex with minimal timeout for performance
-    if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(10)) == pdTRUE)
+    if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
     {
         connected = networkState.internetConnected;
         xSemaphoreGive(networkStateMutex);
-    }
-    else
-    {
-        // Fallback: assume false if mutex unavailable (rare case)
-        log_v("Network state mutex timeout - assuming no internet");
-        connected = false;
     }
 
     return connected;
@@ -2083,66 +2054,4 @@ void clearFirmwareDownloadInProgress(void)
     {
         log_e("Failed to acquire network state mutex for firmware download flag");
     }
-}
-
-/**
- * @brief Check if firmware update or NTP sync maintenance is pending
- * @return true if maintenance operations are pending, false otherwise
- */
-bool isMaintenancePending(void)
-{
-    // Create local copies to safely access the data with mutex protection
-    systemStatus_t localSysStat;
-    systemData_t localSysData;
-
-    // Get safe copies of system status and data using the existing mechanism
-    Msp_getSystemStatus(&localSysStat);
-
-    // We need a similar function for system data - let's create one
-    extern void Msp_getSystemData(systemData_t *data);
-    Msp_getSystemData(&localSysData);
-
-    tm timeinfo;
-    if (!getLocalTime(&timeinfo))
-    {
-        return false; // Can't check without valid time
-    }
-
-    int current_day = timeinfo.tm_yday; // Day of year (0-365)
-
-    // Check if firmware update is pending (only during midnight window and not yet completed)
-    bool firmwareUpdatePending = false;
-    if (localSysStat.fwAutoUpgrade)
-    {
-        // Firmware update is pending only during midnight window (00:00-00:59)
-        // and only if it hasn't been completed yet for this day
-        if (timeinfo.tm_hour == 0)
-        {
-            firmwareUpdatePending = true;
-        }
-    }
-
-    // Check if NTP sync is pending (only during midnight window and different day)
-    bool ntpSyncPending = (timeinfo.tm_hour == 0) &&
-                         (current_day != localSysData.ntp_last_sync_day);
-
-    // Also check if there's data pending in the send queue
-    bool dataPending = false;
-    extern QueueHandle_t sendDataQueue;
-    if (sendDataQueue != NULL)
-    {
-        int queueSize = uxQueueMessagesWaiting(sendDataQueue);
-        dataPending = (queueSize > 0);
-    }
-
-    // Log maintenance status for debugging
-    if (firmwareUpdatePending || ntpSyncPending || dataPending)
-    {
-        log_i("Maintenance/data pending - FW update: %s, NTP sync: %s, Data queue: %d",
-              firmwareUpdatePending ? "YES" : "NO",
-              ntpSyncPending ? "YES" : "NO",
-              dataPending ? uxQueueMessagesWaiting(sendDataQueue) : 0);
-    }
-
-    return firmwareUpdatePending || ntpSyncPending || dataPending;
 }

@@ -141,87 +141,14 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
     // Compare versions
     if (bHalFirmware_compareVersions(sysData->ver, latestVersion))
     {
-        log_i("New firmware version available, starting download process...");
-
-        // For normal FOTA: only download to SD card, then reboot
-        // The actual flashing will happen after reboot when device checks SD card
-        if (bHalFirmware_downloadToSDCard(downloadUrl))
-        {
-            log_i("Firmware downloaded successfully to SD card");
-            log_i("System will reboot to apply firmware update...");
-            delay(2000); // Give time for logs to be written
-            esp_restart(); // Reboot to trigger SD card firmware check
-        }
-        else
-        {
-            log_e("Failed to download firmware to SD card");
-        }
+        log_i("New firmware version available, starting download and update process...");
+        bHalFirmware_downloadBinaryFirmware(downloadUrl, sysData, sysStatus, devInfo);
     }
     else
     {
         log_i("No firmware update needed, current version is up to date");
     }
 
-    return true;
-}
-
-/**
- * @brief Download firmware from URL to SD card only (no flashing)
- * @param downloadUrl URL to download firmware from
- * @return true if download successful, false otherwise
- */
-bool bHalFirmware_downloadToSDCard(const String &downloadUrl)
-{
-    log_i("Downloading firmware to SD card from: %s", downloadUrl.c_str());
-
-    String firmwarePath = "/firmware.bin";
-
-    // Check if firmware file already exists and delete it to ensure clean download
-    if (SD.exists(firmwarePath.c_str()))
-    {
-        log_i("Existing firmware file found, deleting: %s", firmwarePath.c_str());
-        if (SD.remove(firmwarePath.c_str()))
-        {
-            log_i("Successfully deleted existing firmware file");
-        }
-        else
-        {
-            log_e("Failed to delete existing firmware file");
-            return false;
-        }
-    }
-
-    if (!downloadFile(downloadUrl, firmwarePath))
-    {
-        log_e("Failed to download firmware binary file");
-        return false;
-    }
-
-    log_i("Firmware binary downloaded successfully to: %s", firmwarePath.c_str());
-
-    // Allow SD card to settle after large file operation
-    delay(100);
-
-    // Verify the downloaded file exists and has reasonable size
-    File firmwareFile = SD.open(firmwarePath.c_str(), FILE_READ);
-    if (!firmwareFile)
-    {
-        log_e("Failed to open downloaded firmware file");
-        return false;
-    }
-
-    size_t fileSize = firmwareFile.size();
-    firmwareFile.close();
-
-    if (fileSize < 100000 || fileSize > 3000000) // Reasonable firmware size range
-    {
-        log_e("Downloaded firmware file size (%zu bytes) is outside valid range", fileSize);
-        // Remove invalid file
-        SD.remove(firmwarePath.c_str());
-        return false;
-    }
-
-    log_i("Downloaded firmware file validated: %zu bytes", fileSize);
     return true;
 }
 
@@ -305,106 +232,6 @@ bool bHalFirmware_compareVersions(const String &currentVersion, const String &re
         return false;
 
     return remotePatch > currentPatch;
-}
-
-/**
- * @brief Extract version information from ESP32 firmware binary file using ESP-IDF structures
- * @param firmwarePath Path to the firmware binary file
- * @return Version string extracted from the binary, or empty string if failed
- */
-String bHalFirmware_extractVersionFromFile(const char* firmwarePath)
-{
-    log_i("Extracting version from firmware binary: %s", firmwarePath);
-
-    if (!SD.exists(firmwarePath))
-    {
-        log_e("Firmware file not found: %s", firmwarePath);
-        return "";
-    }
-
-    File firmwareFile = SD.open(firmwarePath, FILE_READ);
-    if (!firmwareFile)
-    {
-        log_e("Failed to open firmware file for version extraction");
-        return "";
-    }
-
-    size_t fileSize = firmwareFile.size();
-    log_d("Firmware file size: %zu bytes", fileSize);
-
-    // Read and verify ESP32 image header
-    esp_image_header_t imageHeader;
-    if (firmwareFile.readBytes((char*)&imageHeader, sizeof(esp_image_header_t)) != sizeof(esp_image_header_t))
-    {
-        log_e("Failed to read ESP32 image header");
-        firmwareFile.close();
-        return "";
-    }
-
-    // Verify ESP32 magic number
-    if (imageHeader.magic != ESP_IMAGE_HEADER_MAGIC)
-    {
-        log_e("Invalid ESP32 magic number: 0x%02X (expected 0x%02X)", imageHeader.magic, ESP_IMAGE_HEADER_MAGIC);
-        firmwareFile.close();
-        return "";
-    }
-
-    log_d("Valid ESP32 firmware header detected");
-
-    // Calculate where the app descriptor should be located
-    // The app descriptor is typically at offset 0x20 in the binary
-    const size_t APP_DESC_OFFSET = 0x20;
-
-    if (!firmwareFile.seek(APP_DESC_OFFSET))
-    {
-        log_e("Failed to seek to app descriptor offset");
-        firmwareFile.close();
-        return "";
-    }
-
-    // Read the app descriptor structure
-    esp_app_desc_t appDesc;
-    if (firmwareFile.readBytes((char*)&appDesc, sizeof(esp_app_desc_t)) != sizeof(esp_app_desc_t))
-    {
-        log_e("Failed to read app descriptor");
-        firmwareFile.close();
-        return "";
-    }
-
-    firmwareFile.close();
-
-    // Extract version string from app descriptor
-    // Ensure null termination
-    char versionBuffer[sizeof(appDesc.version) + 1];
-    memcpy(versionBuffer, appDesc.version, sizeof(appDesc.version));
-    versionBuffer[sizeof(appDesc.version)] = '\0';
-
-    String extractedVersion = String(versionBuffer);
-
-    if (extractedVersion.length() == 0)
-    {
-        log_w("Version string is empty in app descriptor");
-        return "";
-    }
-
-    log_i("Extracted firmware version: %s", extractedVersion.c_str());
-
-    // Log additional app info for debugging
-    char projectNameBuffer[sizeof(appDesc.project_name) + 1];
-    memcpy(projectNameBuffer, appDesc.project_name, sizeof(appDesc.project_name));
-    projectNameBuffer[sizeof(appDesc.project_name)] = '\0';
-
-    char compileTimeBuffer[sizeof(appDesc.time) + 1];
-    memcpy(compileTimeBuffer, appDesc.time, sizeof(appDesc.time));
-    compileTimeBuffer[sizeof(appDesc.time)] = '\0';
-
-    char compileDateBuffer[sizeof(appDesc.date) + 1];
-    memcpy(compileDateBuffer, appDesc.date, sizeof(appDesc.date));
-    compileDateBuffer[sizeof(appDesc.date)] = '\0';
-
-    log_d("Project: %s, Compiled: %s %s", projectNameBuffer, compileDateBuffer, compileTimeBuffer);
-
-    return extractedVersion;
 }
 
 /**
@@ -1640,103 +1467,6 @@ bool bHalFirmware_rollbackFirmware()
     return true; // Never reached due to restart
 }
 
-/**
- * @brief Validate and flash firmware from SD card with ESP-IDF validation
- * @param firmwarePath Path to firmware file on SD card
- * @param forceUpdate If true, bypass version checks and force flash
- * @return true if firmware was flashed, false if not needed or failed
- */
-bool bHalFirmware_validateAndFlashFromSD(const char* firmwarePath, bool forceUpdate)
-{
-    log_i("=== VALIDATING SD CARD FIRMWARE WITH ESP-IDF ===");
-
-    if (!SD.exists(firmwarePath)) {
-        log_e("Firmware file not found: %s", firmwarePath);
-        return false;
-    }
-
-    File firmwareFile = SD.open(firmwarePath, FILE_READ);
-    if (!firmwareFile) {
-        log_e("Failed to open firmware file: %s", firmwarePath);
-        return false;
-    }
-
-    size_t firmwareSize = firmwareFile.size();
-    log_i("Firmware file size: %zu bytes", firmwareSize);
-
-    if (firmwareSize < 100000 || firmwareSize > 3000000) {
-        log_e("Invalid firmware file size: %zu bytes", firmwareSize);
-        firmwareFile.close();
-        return false;
-    }
-
-    // Extract version from firmware binary using ESP-IDF
-    firmwareFile.close();
-    String sdCardVersion = bHalFirmware_extractVersionFromFile(firmwarePath);
-
-    if (sdCardVersion.length() == 0) {
-        log_e("Failed to extract valid version from firmware binary");
-        log_e("This may not be a valid ESP32 firmware file");
-        return false;
-    }
-
-    // Get current firmware version
-    String currentVersion =
-#ifdef VERSION_STRING
-        VERSION_STRING;
-#else
-        "DEV";
-#endif
-
-    log_i("Current firmware version: %s", currentVersion.c_str());
-    log_i("SD card firmware version: %s", sdCardVersion.c_str());
-
-    // Decide whether to flash
-    bool shouldFlash = false;
-    if (forceUpdate) {
-        log_w("FORCE MODE: Bypassing version comparison");
-        shouldFlash = true;
-    } else if (bHalFirmware_compareVersions(currentVersion, sdCardVersion)) {
-        log_i("SD card firmware is newer - will flash");
-        shouldFlash = true;
-    } else {
-        log_i("SD card firmware is same or older - will NOT flash");
-        shouldFlash = false;
-    }
-
-    if (shouldFlash) {
-        log_i("Starting firmware flash from SD card...");
-        log_i("Device will reboot after successful flash");
-
-        // Perform the actual OTA update
-        bool flashSuccess = bHalFirmware_performOTAUpdate(String(firmwarePath));
-
-        if (flashSuccess) {
-            log_i("Firmware flash completed successfully");
-
-            // Remove the firmware file after successful flash
-            if (SD.remove(firmwarePath)) {
-                log_i("Firmware file removed successfully");
-            } else {
-                log_w("Failed to remove firmware file - will be cleaned up on next boot");
-            }
-
-            // Reboot to start with new firmware
-            log_i("Rebooting to start new firmware...");
-            delay(2000); // Give time for logs
-            esp_restart();
-
-            return true; // Will never reach here due to restart
-        } else {
-            log_e("Firmware flash failed");
-            return false;
-        }
-    } else {
-        log_i("No firmware flash needed");
-        return false;
-    }
-}
-
 #ifdef ENABLE_FIRMWARE_UPDATE_TESTS
 // Test functions implementation
 
@@ -1795,31 +1525,14 @@ void vHalFirmware_testGitHubAPI()
 {
     log_i("=== Testing GitHub API ===");
 
-    // Check available heap memory before test
-    size_t freeBefore = ESP.getFreeHeap();
-    log_i("Free heap before GitHub API test: %zu bytes", freeBefore);
-
-    if (freeBefore < 50000) {
-        log_w("Insufficient heap memory (%zu bytes) for GitHub API test, skipping", freeBefore);
-
-        // Still report memory status before returning
-        size_t freeAfter = ESP.getFreeHeap();
-        log_i("Free heap after GitHub API test: %zu bytes (delta: %d)", freeAfter, (int)(freeAfter - freeBefore));
-        return;
-    }
-
     if (!WiFi.isConnected())
     {
         log_w("WiFi not connected, skipping GitHub API test");
-
-        // Still report memory status before returning
-        size_t freeAfter = ESP.getFreeHeap();
-        log_i("Free heap after GitHub API test: %zu bytes (delta: %d)", freeAfter, (int)(freeAfter - freeBefore));
         return;
     }
 
     HTTPClient http;
-    http.setTimeout(5000); // Reduced timeout to prevent hangs
+    http.setTimeout(10000);
 
     if (!http.begin(GITHUB_TEST_API_URL))
     {
@@ -1839,13 +1552,8 @@ void vHalFirmware_testGitHubAPI()
         log_i("PASS: GitHub API responded successfully");
         log_d("Response length: %d bytes", payload.length());
 
-        // Try to parse JSON with smaller buffer for safety
-        if (payload.length() > 4000) {
-            log_w("GitHub API response too large (%d bytes), truncating for test", payload.length());
-            payload = payload.substring(0, 4000);
-        }
-
-        DynamicJsonDocument doc(4096);  // Reduced buffer size
+        // Try to parse JSON
+        DynamicJsonDocument doc(8192);
         DeserializationError error = deserializeJson(doc, payload);
 
         if (!error)
@@ -1894,10 +1602,6 @@ void vHalFirmware_testGitHubAPI()
     }
 
     http.end();
-
-    // Check memory after test
-    size_t freeAfter = ESP.getFreeHeap();
-    log_i("Free heap after GitHub API test: %zu bytes (delta: %d)", freeAfter, (int)(freeAfter - freeBefore));
 }
 
 /**
@@ -1977,8 +1681,8 @@ void vHalFirmware_testOTAManagement()
     log_i("Test 5: Complete FOTA Process Test");
 
     // Test URL - try to get actual latest release URL first, fallback to fixed URL for testing
-    String testFirmwareUrl = "https://github.com/A-A-Milano-Smart-Park/msp-firmware/releases/download/v4.1.1/update_v4.1.1.bin";
-    String testFirmwarePath = "/update_v4.1.1.bin";
+    String testFirmwareUrl = "https://github.com/A-A-Milano-Smart-Park/msp-firmware/releases/download/v4.1.0/update_v4.1.0.bin";
+    String testFirmwarePath = "/update_v4.1.0.bin";
 
     // Alternative: Try to get latest release URL from GitHub API (but simpler for now)
     log_i("Attempting to download test firmware from: %s", testFirmwareUrl.c_str());
@@ -2078,233 +1782,17 @@ void vHalFirmware_testOTAManagement()
 }
 
 /**
- * @brief Force flash firmware from SD card without version checking (for tests)
- * @param firmwarePath Path to firmware file on SD card
- * @return true if flash was successful, false otherwise
- */
-bool bHalFirmware_forceFlashFromSDCard(const char* firmwarePath)
-{
-    log_w("=== FORCE FLASH FROM SD CARD (NO VERSION CHECK) ===");
-    log_w("DANGER: This will flash firmware without any version validation!");
-
-    if (!SD.exists(firmwarePath)) {
-        log_e("Firmware file not found: %s", firmwarePath);
-        return false;
-    }
-
-    File firmwareFile = SD.open(firmwarePath, FILE_READ);
-    if (!firmwareFile) {
-        log_e("Failed to open firmware file: %s", firmwarePath);
-        return false;
-    }
-
-    size_t firmwareSize = firmwareFile.size();
-    log_i("Firmware file size: %zu bytes", firmwareSize);
-
-    if (firmwareSize == 0 || firmwareSize > 2000000) { // Sanity check: max 2MB
-        log_e("Invalid firmware file size: %zu bytes", firmwareSize);
-        firmwareFile.close();
-        return false;
-    }
-
-    firmwareFile.close();
-
-    // Force flash the firmware using OTA
-    log_w("Starting FORCE firmware flash from SD card...");
-    return bHalFirmware_performOTAUpdate(firmwarePath);
-}
-
-
-/**
- * @brief Check firmware version on SD card and flash if newer (legacy function)
- * @param firmwarePath Path to firmware file on SD card
- * @return true if firmware was flashed (newer version), false if not needed or failed
- */
-bool bHalFirmware_checkVersionAndFlash(const char* firmwarePath)
-{
-    log_i("=== CHECKING FIRMWARE VERSION ON SD CARD ===");
-
-    if (!SD.exists(firmwarePath)) {
-        log_e("Firmware file not found: %s", firmwarePath);
-        return false;
-    }
-
-    File firmwareFile = SD.open(firmwarePath, FILE_READ);
-    if (!firmwareFile) {
-        log_e("Failed to open firmware file: %s", firmwarePath);
-        return false;
-    }
-
-    size_t firmwareSize = firmwareFile.size();
-    log_i("Firmware file size: %zu bytes", firmwareSize);
-
-    if (firmwareSize == 0 || firmwareSize > 2000000) { // Sanity check: max 2MB
-        log_e("Invalid firmware file size: %zu bytes", firmwareSize);
-        firmwareFile.close();
-        return false;
-    }
-
-    // Try to extract version from firmware binary header or use filename parsing
-    String sdCardVersion = bHalFirmware_extractVersionFromFile(firmwarePath);
-
-    if (sdCardVersion.length() == 0) {
-        log_w("Could not extract version from firmware file - assuming it's newer");
-        sdCardVersion = "UNKNOWN";
-    }
-
-    // Get current firmware version
-    String currentVersion =
-#ifdef VERSION_STRING
-        VERSION_STRING;
-#else
-        "DEV";
-#endif
-
-    log_i("Current firmware version: %s", currentVersion.c_str());
-    log_i("SD card firmware version: %s", sdCardVersion.c_str());
-
-    // Compare versions (if we could extract SD card version)
-    bool shouldUpdate = false;
-    if (sdCardVersion == "UNKNOWN") {
-        log_w("Unknown SD card firmware version - will update as safety measure");
-        shouldUpdate = true;
-    } else if (bHalFirmware_compareVersions(currentVersion, sdCardVersion)) {
-        log_i("SD card firmware is newer - will update");
-        shouldUpdate = true;
-    } else {
-        log_i("SD card firmware is same or older - will NOT update");
-        shouldUpdate = false;
-    }
-
-    firmwareFile.close();
-
-    if (shouldUpdate) {
-        log_i("Starting firmware update from SD card...");
-        return bHalFirmware_performOTAUpdate(firmwarePath);
-    } else {
-        log_i("No firmware update needed");
-        return false;
-    }
-}
-
-
-/**
- * @brief Force firmware update from GitHub bypassing all version checks
- * This function is only available when ENABLE_FIRMWARE_UPDATE_TESTS is defined
- */
-bool bHalFirmware_forceUpdateFromGitHub(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetworkInfo_t *devInfo)
-{
-    log_i("=== FORCE FIRMWARE UPDATE - TEST MODE ===");
-    log_w("BYPASSING fw_auto_upgrade flag and time restrictions!");
-
-    // Ensure we have internet connection
-    if (!WiFi.isConnected() && !sysStatus->use_modem)
-    {
-        log_w("WiFi not connected for force firmware update");
-        requestNetworkConnection();
-        return false;
-    }
-
-    HTTPClient http;
-    http.setTimeout(FIRMWARE_UPDATE_TIMEOUT_MS);
-
-    if (!http.begin(GITHUB_API_URL))
-    {
-        log_e("Failed to initialize HTTP client for GitHub API");
-        return false;
-    }
-
-    http.addHeader("User-Agent", "MilanoSmartPark-ESP32-ForceUpdate");
-    http.addHeader("Accept", "application/vnd.github.v3+json");
-
-    int httpCode = http.GET();
-
-    if (httpCode != HTTP_CODE_OK)
-    {
-        log_e("GitHub API request failed with code: %d", httpCode);
-        http.end();
-        return false;
-    }
-
-    String payload = http.getString();
-    http.end();
-
-    log_d("GitHub API response: %s", payload.substring(0, 200).c_str());
-
-    // Parse JSON response
-    DynamicJsonDocument doc(8192);
-    DeserializationError error = deserializeJson(doc, payload);
-
-    if (error)
-    {
-        log_e("JSON parsing failed: %s", error.c_str());
-        return false;
-    }
-
-    // Extract release information
-    String latestTag = doc["tag_name"].as<String>();
-    String downloadUrl = "";
-    String latestVersion = extractVersionFromTag(latestTag);
-
-    // Look for the direct binary file (update_vX.X.X.bin)
-    JsonArray assets = doc["assets"];
-    String binaryFileName = "update_" + latestTag + ".bin";
-
-    for (JsonObject asset : assets)
-    {
-        String name = asset["name"].as<String>();
-        String url = asset["browser_download_url"].as<String>();
-
-        if (name == binaryFileName)
-        {
-            downloadUrl = url;
-            log_i("Found application binary: %s", name.c_str());
-            break;
-        }
-    }
-
-    if (downloadUrl.isEmpty())
-    {
-        log_e("No application binary (%s) found in release assets", binaryFileName.c_str());
-        return false;
-    }
-
-    log_i("Current version: %s", sysData->ver.c_str());
-    log_i("Latest version: %s", latestVersion.c_str());
-    log_i("Download URL: %s", downloadUrl.c_str());
-
-    // FORCE UPDATE - Skip version comparison completely
-    log_w("FORCE MODE: Bypassing version comparison - downloading %s regardless of current version", latestVersion.c_str());
-
-    // Download to SD card and reboot (flash will happen after reboot)
-    log_i("Force downloading latest firmware version to SD card: %s", latestVersion.c_str());
-    if (bHalFirmware_downloadToSDCard(downloadUrl))
-    {
-        log_i("Firmware downloaded successfully to SD card");
-        log_i("System will reboot to apply firmware update...");
-        delay(2000); // Give time for logs to be written
-        esp_restart(); // Reboot to trigger SD card firmware check
-        return true; // Will never reach here due to restart
-    }
-    else
-    {
-        log_e("Failed to download firmware to SD card");
-        return false;
-    }
-}
-
-/**
  * @brief Test function for force OTA update
  */
 void vHalFirmware_testForceOTAUpdate(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetworkInfo_t *devInfo)
 {
     log_i("=== Force OTA Update Test ===");
-    log_w("DANGER: This will perform ACTUAL OTA update WITHOUT version checking!");
+    log_w("DANGER: This will perform ACTUAL OTA update without version checking!");
     log_w("The device WILL reboot and install the latest firmware from GitHub!");
-    log_i("Force downloading and installing latest firmware...");
+    log_i("Requesting force OTA update via network task for proper stack management...");
 
-    // Force firmware update bypassing version checks
-    bHalFirmware_forceUpdateFromGitHub(sysData, sysStatus, devInfo);
+    // Use network task for consistent stack management
+    bHalFirmware_checkForUpdates(sysData, sysStatus, devInfo);
 }
 
 #endif

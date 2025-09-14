@@ -158,24 +158,6 @@ void updateNetworkConfig(void);
 bool getNetworkStatus(bool *wifiConnected, bool *gsmConnected, bool *timeSync);
 
 /**
- * @brief Check if firmware update or NTP sync maintenance is pending
- * @return true if maintenance operations are pending, false otherwise
- */
-bool isMaintenancePending(void);
-
-/**
- * @brief Get a safe copy of system status structure
- * @param stat Pointer to systemStatus_t structure to copy into
- */
-void Msp_getSystemStatus(systemStatus_t *stat);
-
-/**
- * @brief Get a safe copy of system data structure
- * @param data Pointer to systemData_t structure to copy into
- */
-void Msp_getSystemData(systemData_t *data);
-
-/**
  * @brief Check if network task is running
  * @return true if network task is active, false otherwise
  */

@@ -34,10 +34,6 @@
 #include <PMS.h>
 // for MICS6814
 #include <MiCS6814-I2C.h>
-// Prevent DBG macro redefinition conflict between DFRobot_MICS and TinyGSM
-#ifdef DBG
-#undef DBG
-#endif
 #include "DFRobot_MICS.h" // MICS4514 sensor library
 
 // OLED display library
@@ -130,8 +126,6 @@ void vMspInit_MeasInfo(void);
 
 void Msp_getSystemStatus(systemStatus_t *stat);
 
-void Msp_getSystemData(systemData_t *data);
-
 //*******************************************************************************************************************************
 
 void Msp_getSystemStatus(systemStatus_t *stat)
@@ -140,21 +134,6 @@ void Msp_getSystemStatus(systemStatus_t *stat)
   vMspOs_takeDataAccessMutex();
 
   memcpy(stat, &sysStat, sizeof(systemStatus_t));
-
-  vMspOs_giveDataAccessMutex();
-}
-
-/**
- * @brief Get a safe copy of system data structure
- * @param data Pointer to systemData_t structure to copy into
- */
-void Msp_getSystemData(systemData_t *data)
-{
-  if (data == NULL) return;
-
-  vMspOs_takeDataAccessMutex();
-
-  *data = sysData; // Use assignment operator for proper C++ object copying
 
   vMspOs_giveDataAccessMutex();
 }
@@ -169,7 +148,6 @@ void setup()
   memset(&mainStateMachine, 0, sizeof(mainStateMachine)); // Initialize the state machine structure
   memset(&sensorData_accumulate, 0, sizeof(sensorData_accumulate));
   memset(&sensorData_single, 0, sizeof(sensorData_single));
-  memset(&sysStat, 0, sizeof(sysStat)); // Initialize system status structure
   sysData = systemData_t();
 
   vMsp_setGpioPins();
@@ -236,62 +214,24 @@ void setup()
     // Could implement rollback logic here if needed
   }
 
-  // STEP 1: Check for firmware binary on SD card as FIRST priority
-  log_i("=== STEP 1: Checking for firmware binary on SD card ===");
+  // STEP 1: Single SD Card Configuration Reading
+  log_i("=== STEP 1: Loading complete system configuration from SD card ===");
   vHalSdcard_readSD(&sysStat, &devinfo, &sensorData_accumulate, &measStat, &sysData);
 
-  // PRIORITY: Check for firmware.bin on SD card first (both normal and test mode)
-  if (SD.exists("/firmware.bin"))
-  {
-    log_i("Firmware binary found on SD card - starting validation process");
-
-#ifdef ENABLE_FIRMWARE_UPDATE_TESTS
-    // TEST MODE: Force flash without version checks
-    log_w("UPDATE_TESTS ACTIVE: Forcing firmware flash regardless of version!");
-
-    if (bHalFirmware_validateAndFlashFromSD("/firmware.bin", true))
-    {
-      log_i("Force firmware update completed - device will reboot");
-      // Device reboots automatically in the function
+  // Phase 2: Check for downloaded firmware and apply update if newer
+  if (SD.exists("/firmware.bin")) {
+    log_i("Downloaded firmware file found - checking for update");
+    if (bHalFirmware_checkAndApplyPendingUpdate("/firmware.bin")) {
+      log_i("Firmware update applied successfully");
+    } else {
+      log_w("No firmware update needed or update failed - cleaning up file");
     }
-    else
-    {
-      log_e("Force firmware update failed - removing invalid file");
-      SD.remove("/firmware.bin");
+    // Always remove firmware file after processing
+    if (SD.remove("/firmware.bin")) {
+      log_i("Firmware file cleaned up successfully");
+    } else {
+      log_w("Failed to remove firmware.bin file");
     }
-#else
-    // NORMAL MODE: Validate version before flashing
-    log_i("Normal mode: Validating firmware version and integrity");
-
-    if (bHalFirmware_validateAndFlashFromSD("/firmware.bin", false))
-    {
-      log_i("Firmware update applied successfully - device will reboot");
-      // Device reboots automatically in the function
-    }
-    else
-    {
-      log_i("Firmware validation completed - no update needed or update failed");
-      // Remove the firmware file (either older version or failed validation)
-      if (SD.remove("/firmware.bin"))
-      {
-        log_i("Firmware file cleaned up successfully");
-      }
-      else
-      {
-        log_w("Failed to remove firmware.bin file");
-      }
-    }
-#endif
-  }
-  else
-  {
-    log_i("No firmware.bin found on SD card - continuing normal boot");
-
-#ifdef ENABLE_FIRMWARE_UPDATE_TESTS
-    // TEST MODE: If no SD firmware, set flag to download from GitHub
-    log_i("TEST MODE: No SD firmware found, will download from GitHub after network connection");
-    sysStat.forceGitHubUpdate = true;
-#endif
   }
 
   // STEP 2: Fill system configuration with SD data or defaults
@@ -376,49 +316,49 @@ void setup()
   // Initialize gas sensor based on configuration type
   switch (sysStat.gasSensorType)
   {
-  case GAS_SENSOR_MICS6814:
-  {
-    if (gas.begin())
-    { // Connect to MICS6814 sensor using default I2C address (0x04)
-      log_i("MICS6814 sensor detected, initializing...\n");
-      sensorData_accumulate.status.MICS6814Sensor = true;
-      gas.powerOn(); // turn on heating element and led
-      gas.ledOn();
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    case GAS_SENSOR_MICS6814:
+    {
+      if (gas.begin())
+      { // Connect to MICS6814 sensor using default I2C address (0x04)
+        log_i("MICS6814 sensor detected, initializing...\n");
+        sensorData_accumulate.status.MICS6814Sensor = true;
+        gas.powerOn(); // turn on heating element and led
+        gas.ledOn();
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
-      sensorR0Value_t r0Values;
-      r0Values.redSensor = gas.getBaseResistance(CH_RED);
-      r0Values.oxSensor = gas.getBaseResistance(CH_OX);
-      r0Values.nh3Sensor = gas.getBaseResistance(CH_NH3);
+        sensorR0Value_t r0Values;
+        r0Values.redSensor = gas.getBaseResistance(CH_RED);
+        r0Values.oxSensor = gas.getBaseResistance(CH_OX);
+        r0Values.nh3Sensor = gas.getBaseResistance(CH_NH3);
 
-      if (tHalSensor_checkMicsValues(&sensorData_accumulate, &r0Values) == STATUS_OK)
-      {
-        log_i("MICS6814 R0 values are already as default!\n");
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        if (tHalSensor_checkMicsValues(&sensorData_accumulate, &r0Values) == STATUS_OK)
+        {
+          log_i("MICS6814 R0 values are already as default!\n");
+          vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        }
+        else
+        {
+          log_i("Setting MICS6814 R0 values as default... ");
+          vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+
+          vHalSensor_writeMicsValues(&sensorData_accumulate);
+
+          vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+          log_i("Done!\n");
+        }
+        gas.setOffsets(&sensorData_accumulate.pollutionData.sensingResInAirOffset.redSensor);
       }
       else
       {
-        log_i("Setting MICS6814 R0 values as default... ");
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-
-        vHalSensor_writeMicsValues(&sensorData_accumulate);
-
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-        log_i("Done!\n");
+        log_e("MICS6814 sensor not detected!\n");
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       }
-      gas.setOffsets(&sensorData_accumulate.pollutionData.sensingResInAirOffset.redSensor);
+      break;
     }
-    else
-    {
-      log_e("MICS6814 sensor not detected!\n");
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-    }
-    break;
-  }
 
-  case GAS_SENSOR_MICS4514:
-  {
-    log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...\n");
+    case GAS_SENSOR_MICS4514:
+    {
+      log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...\n");
 
     if (mics4514.begin())
     { // Connect to MICS4514 sensor using I2C
@@ -427,31 +367,31 @@ void setup()
 
       mics4514.wakeUpMode();
 
-      // Start sensor warmup process
-      log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
-      mics4514.warmUpTime(MICS4514_WARMUP_TIME_MIN);
+        // Start sensor warmup process
+        log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
+        mics4514.warmUpTime(MICS4514_WARMUP_TIME_MIN);
 
-      // Initialize MICS4514 specific data
-      sensorData_accumulate.mics4514Data.warmupComplete = 0;
-      sensorData_accumulate.mics4514Data.powerState = 1;
+        // Initialize MICS4514 specific data
+        sensorData_accumulate.mics4514Data.warmupComplete = 0;
+        sensorData_accumulate.mics4514Data.powerState = 1;
 
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-      log_i("MICS4514 initialization complete!\n");
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        log_i("MICS4514 initialization complete!\n");
+      }
+      else
+      {
+        log_e("MICS4514 sensor not detected!\n");
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      }
+      break;
     }
-    else
+
+    default:
     {
-      log_e("MICS4514 sensor not detected!\n");
+      log_e("Unknown gas sensor type: %d\n", sysStat.gasSensorType);
       vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      break;
     }
-    break;
-  }
-
-  default:
-  {
-    log_e("Unknown gas sensor type: %d\n", sysStat.gasSensorType);
-    vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-    break;
-  }
   }
   //+++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -556,31 +496,15 @@ void loop()
       }
 
 #ifdef ENABLE_FIRMWARE_UPDATE_TESTS
-      // Check if we need to force GitHub firmware update
-      if (sysStat.forceGitHubUpdate)
-      {
-        log_w("=== FORCE GITHUB FIRMWARE UPDATE TRIGGERED ===");
-        log_w("Downloading latest firmware from GitHub and forcing flash!");
-
-        // Download and force flash latest firmware from GitHub
-        if (bHalFirmware_forceUpdateFromGitHub(&sysData, &sysStat, &devinfo))
-        {
-          log_i("GitHub firmware download and update initiated - device will reboot");
-          // Device reboots automatically in the update function
-        }
-        else
-        {
-          log_e("GitHub firmware update failed");
-          sysStat.forceGitHubUpdate = false; // Reset flag on failure
-        }
-      }
-      else
-      {
-        log_i("=== Firmware Update Tests: No force update requested ===");
-      }
+      // Run firmware update tests now that internet connection is established
+      log_i("=== Running Firmware Update Tests ===");
+      vHalFirmware_testConfigParsing(&sysStat);
+      vHalFirmware_testVersionComparison();
+      vHalFirmware_testOTAManagement();
+      // GitHub API test can now properly test connectivity
+      vHalFirmware_testGitHubAPI();
+      log_i("=== Firmware Update Tests Completed ===");
 #endif
-
-      // Firmware update check now handled AFTER data transmission for priority
 
       mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
       mainStateMachine.isFirstTransition = true;
@@ -612,6 +536,31 @@ void loop()
       measStat.curr_minutes = timeinfo.tm_min;
       measStat.curr_seconds = timeinfo.tm_sec;
       measStat.curr_total_seconds = measStat.curr_minutes * SEC_IN_MIN + measStat.curr_seconds;
+
+      // Check if daily NTP sync is needed (at 00:00:00)
+      int current_day = timeinfo.tm_yday; // Day of year (0-365)
+      if ((timeinfo.tm_hour == 0 && timeinfo.tm_min == 0 && timeinfo.tm_sec == 0) &&
+          (current_day != sysData.ntp_last_sync_day))
+      {
+        log_i("Daily NTP sync needed - triggering time synchronization");
+        sysData.ntp_last_sync_day = current_day;
+        requestNetworkConnection(); // This will trigger NTP sync
+        mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+        break;
+      }
+
+      // Check for firmware updates at 00:00:00 if fwAutoUpgrade is enabled
+      // and if there is a valid internet connection
+      static int last_fw_check_day = -1;
+      if ((current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
+      {
+        log_i("Daily firmware update check triggered");
+
+        if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
+        {
+          last_fw_check_day = current_day;
+        }
+      }
 
       // Calculate if we are exactly at the start of a minute (00 seconds)
       // We trigger measurement only when seconds == 0, ensuring exact minute alignment
@@ -701,16 +650,10 @@ void loop()
         }
 
         // Only set first transition flag when coming from states that require reset
-        // Don't reset cycle when returning from NTP sync during normal operations
-        if (mainStateMachine.prev_state == SYS_STATE_SEND_DATA)
+        if ((mainStateMachine.prev_state == SYS_STATE_WAIT_FOR_NTP_SYNC) || (mainStateMachine.prev_state == SYS_STATE_SEND_DATA))
         {
           mainStateMachine.isFirstTransition = true;
-          log_i("Setting first transition flag for new measurement cycle after data transmission");
-        }
-        else if (mainStateMachine.prev_state == SYS_STATE_WAIT_FOR_NTP_SYNC)
-        {
-          log_i("Returning from NTP sync - continuing existing measurement cycle without reset");
-          // Don't set isFirstTransition to avoid disrupting ongoing measurement cycle
+          log_i("Setting first transition flag for new measurement cycle");
         }
         mainStateMachine.prev_state = SYS_STATE_WAIT_FOR_TIMEOUT;
         mainStateMachine.next_state = SYS_STATE_READ_SENSORS; // go to read sensors state
@@ -932,11 +875,9 @@ void loop()
 
         // Read gas concentrations from MICS4514 using DFRobot library
         // Note: DFRobot library returns values in PPM
-        micsLocData.carbonMonoxide = mics4514.getGasData(CO);   // Get CO in PPM
-        micsLocData.nitrogenDioxide = mics4514.getGasData(NO2); // Get NO2 in PPM
-        micsLocData.ammonia = mics4514.getGasData(NH3);         // Get NH3 in PPM
-
-        log_v("CO: %.3f PPM - NO2: %.3f PPM - NH3: %.3f PPM", micsLocData.carbonMonoxide, micsLocData.nitrogenDioxide, micsLocData.ammonia);
+        micsLocData.carbonMonoxide = mics4514.getGasData(CO);        // Get CO in PPM
+        micsLocData.nitrogenDioxide = mics4514.getGasData(NO2);      // Get NO2 in PPM
+        micsLocData.ammonia = mics4514.getGasData(NH3);              // Get NH3 in PPM
 
         if ((micsLocData.carbonMonoxide < 0) || (micsLocData.nitrogenDioxide < 0) || (micsLocData.ammonia < 0))
         {
@@ -1142,7 +1083,7 @@ void loop()
     // Check if it's time to send data
     // We transmit when: 1) we have collected avg_measurements AND 2) we're at a transmission boundary AND 3) haven't transmitted at this boundary yet
     bool have_enough_measurements = (measStat.measurement_count >= measStat.avg_measurements);
-    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.avg_measurements) == 0);   // Transmit at intervals
+    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.avg_measurements) == 0); // Transmit at intervals
     bool boundary_not_transmitted = (measStat.last_transmission_minute != measStat.curr_minutes); // Prevent duplicate transmissions at same boundary
 
     log_i("TRANSMISSION CHECK: collected %d/%d measurements, boundary=%s (minute %d, interval=%d), last_tx_minute=%d",
@@ -1268,15 +1209,13 @@ void loop()
     if (enqueueSendData(sendData, pdMS_TO_TICKS(500)))
     {
       log_i("Data enqueued successfully for network transmission");
-      // NOTE: Wait for NET_EVENT_DATA_SENT - network task uses smart logic:
-      // - Success response from server, OR
-      // - Smart assumption (ping OK + data sent completely) during high load
-      log_i("Data enqueued at minute %d, awaiting network confirmation", measStat.curr_minutes);
+      measStat.data_transmitted = true; // Mark data as transmitted for this cycle
+      measStat.last_transmission_minute = measStat.curr_minutes; // Record the transmission boundary minute
+      log_i("Recorded transmission at minute %d to prevent duplicates", measStat.last_transmission_minute);
     }
     else
     {
       log_e("Failed to enqueue data for transmission - queue might be full");
-      // Allow retry by not marking transmission flags
     }
 
     // show the already captured data
@@ -1290,42 +1229,14 @@ void loop()
           sensorData_accumulate.pollutionData.data.carbonMonoxide, sensorData_accumulate.pollutionData.data.nitrogenDioxide, sensorData_accumulate.pollutionData.data.ammonia,
           sensorData_accumulate.ozoneData.ozone, sensorData_accumulate.MSP, measStat.measurement_count, measStat.avg_measurements);
 
-    // Wait for network confirmation (handles both explicit success and smart assumption during high load)
-    log_i("Waiting for network layer confirmation...");
-    if (pdTRUE == waitForNetworkEvent(NET_EVENT_DATA_SENT, pdMS_TO_TICKS(20000))) // 20 second timeout (includes ping + transmission + smart logic)
-    {
-      log_i("Network confirmed data transmission at minute %d (via server response or smart assumption)", measStat.curr_minutes);
-      measStat.data_transmitted = true;                          // Mark data as successfully transmitted
-      measStat.last_transmission_minute = measStat.curr_minutes; // Record transmission boundary
-      log_i("Recorded confirmed transmission at minute %d to prevent duplicates", measStat.last_transmission_minute);
-    }
-    else
-    {
-      log_w("Network confirmation timeout - transmission failed (ping failed or data not sent)");
-      log_i("Allowing retry by not marking transmission flags - next boundary will retry");
-      // Do NOT mark data_transmitted or last_transmission_minute - allows retry at next boundary
-    }
-
     mainStateMachine.isFirstTransition = true; // set first transition flag
     // This will clean up the sensor variables for the next cycle
 
     // Always reset measurement count after transmission attempt (success or failure)
     log_i("TRANSMISSION ATTEMPT COMPLETE: Resetting measurement_count from %d to 0", measStat.measurement_count);
     measStat.measurement_count = 0;
-
-    // Only reset transmission flags if transmission was confirmed successful
-    // If server confirmation failed, keep flags unchanged to allow retry at next boundary
-    if (!measStat.data_transmitted)
-    {
-      log_i("Transmission not confirmed - keeping retry capability for next boundary");
-      // last_transmission_minute also stays unchanged to allow retry
-    }
-    else
-    {
-      measStat.data_transmitted = false; // Reset flag for new measurement cycle
-      log_i("Transmission confirmed - reset flags for new cycle");
-    }
-    // Note: last_transmission_minute persists between cycles to prevent duplicates at same boundary
+    measStat.data_transmitted = false; // Reset flag for new measurement cycle
+    // Note: last_transmission_minute is NOT reset here - it stays to prevent duplicates at the same boundary
 
     // Reset all sensor data (both single and accumulated) for clean start of next cycle
     log_i("Resetting all sensor data for next measurement cycle");
@@ -1357,86 +1268,6 @@ void loop()
 
     // After transmission, system is now aligned - next cycles will be full measurements
     log_i("Data sent successfully. System now aligned - next cycles will collect %d measurements", measStat.max_measurements);
-
-    // PRIORITY: Handle daily maintenance AFTER data transmission completes
-    // This ensures measurement data transmission always has the highest priority
-    if (getLocalTime(&timeinfo))
-    {
-      int current_day = timeinfo.tm_yday; // Day of year (0-365)
-
-      // Combined firmware update and NTP sync check
-      static int last_fw_check_day = -1;
-      static bool fw_update_needed = true;
-
-      // Set firmware update flag at midnight (00:00:00) once per day
-      if ((timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
-          (current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
-      {
-        log_i("Setting firmware update flag at midnight for day %d", current_day);
-        fw_update_needed = true;
-        // Don't mark last_fw_check_day yet - only mark it after successful check
-      }
-
-      bool needsNtpSync = (timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
-                         (current_day != sysData.ntp_last_sync_day);
-
-      if (fw_update_needed || needsNtpSync)
-      {
-        // Request network connection for maintenance operations
-        if (!isInternetConnected())
-        {
-          log_i("Maintenance operations needed - requesting network connection");
-          requestNetworkConnection();
-          // Wait a moment for connection to establish
-          vTaskDelay(pdMS_TO_TICKS(2000));
-        }
-
-        // Check if we now have internet connectivity for operations
-        if (isInternetConnected())
-        {
-          // Perform firmware update check if flag is set
-          if (fw_update_needed)
-          {
-            log_i("Firmware update flag set - checking for updates with internet available");
-            if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
-            {
-              fw_update_needed = false; // Clear flag after successful check
-              last_fw_check_day = current_day; // Mark as completed for this day
-              log_i("Firmware update check completed successfully for day %d", current_day);
-            }
-            else
-            {
-              log_w("Firmware update check failed - flag remains set for retry when internet is available");
-              // Keep flag set for retry in next cycle when internet is available
-            }
-          }
-
-          // Perform NTP sync if needed
-          if (needsNtpSync)
-          {
-            log_i("Daily NTP sync needed AFTER data transmission - internet available, triggering time synchronization");
-            sysData.ntp_last_sync_day = current_day;
-            requestTimeSync(); // Request ONLY time sync, not full connection
-            mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
-            mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
-            break;
-          }
-        }
-        else
-        {
-          if (fw_update_needed)
-          {
-            log_w("Firmware update check needed but failed to establish internet connectivity - flag remains set for retry");
-          }
-          if (needsNtpSync)
-          {
-            log_w("Daily NTP sync needed but failed to establish internet connectivity - will retry later");
-          }
-          log_i("Firmware check and NTP sync deferred until internet connectivity can be established");
-          // Don't mark any as completed - will retry in next cycle when internet is available
-        }
-      }
-    }
 
     mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
     mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT; // go to wait for timeout state
@@ -1606,8 +1437,8 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
     // Measurement configuration - ensure it's a valid submultiple of 60
     int valid_intervals[] = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60};
     bool is_valid = false;
-
-    for (int i = 0; i < sizeof(valid_intervals) / sizeof(valid_intervals[0]); i++)
+    
+    for (int i = 0; i < sizeof(valid_intervals)/sizeof(valid_intervals[0]); i++)
     {
       if (measStat->avg_measurements == valid_intervals[i])
       {
@@ -1615,7 +1446,7 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
         break;
       }
     }
-
+    
     if (!is_valid || measStat->avg_measurements <= 0)
     {
       measStat->avg_measurements = 5; // Default to 5 measurements
@@ -1642,8 +1473,8 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
     // Valid submultiples of 60: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60
     int valid_intervals[] = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60};
     bool is_valid = false;
-
-    for (int i = 0; i < sizeof(valid_intervals) / sizeof(valid_intervals[0]); i++)
+    
+    for (int i = 0; i < sizeof(valid_intervals)/sizeof(valid_intervals[0]); i++)
     {
       if (measStat->avg_measurements == valid_intervals[i])
       {
@@ -1651,7 +1482,7 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
         break;
       }
     }
-
+    
     if (!is_valid || measStat->avg_measurements <= 0)
     {
       log_w("Invalid avg_measurements (%d), must be submultiple of 60. Setting to 5", measStat->avg_measurements);
