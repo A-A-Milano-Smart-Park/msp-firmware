@@ -16,6 +16,7 @@
 #include <ArduinoJson.h>
 
 #include "sdcard.h"
+#include "shared_values.h"
 #include "generic_functions.h"
 #include "display_task.h"
 #include "display.h"
@@ -466,6 +467,12 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
   // Parse Firmware Auto Upgrade
   sysStat->fwAutoUpgrade = config[JSON_KEY_FW_AUTO_UPGRADE] | false;
   log_i("fwAutoUpgrade = *%s*", (sysStat->fwAutoUpgrade) ? STR_TRUE : STR_FALSE);
+
+  // Parse Gas Sensor Type
+  sysStat->gasSensorType = config[JSON_KEY_GAS_SENSOR_TYPE] | GAS_SENSOR_MICS6814; // Default to MICS6814
+  log_i("gasSensorType = %d (%s)", sysStat->gasSensorType,
+        (sysStat->gasSensorType == GAS_SENSOR_MICS6814) ? "MICS6814" :
+        (sysStat->gasSensorType == GAS_SENSOR_MICS4514) ? "MICS4514" : "Unknown");
 
   return outcome;
 }

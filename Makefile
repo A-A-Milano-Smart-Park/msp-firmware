@@ -18,7 +18,8 @@ LIBRARIES := \
 	TinyGSM@0.11.7 \
 	ArduinoJson@7.4.2
 LIBRARIES_URLS := \
-	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library
+	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library \
+	https://github.com/DFRobot/DFRobot_MICS
 
 # The FQBN is the core, followed by the board.
 CORE_NAME := $(shell echo $(CORE) | cut -f1 -d@)

@@ -34,6 +34,7 @@
 #include <PMS.h>
 // for MICS6814
 #include <MiCS6814-I2C.h>
+#include "DFRobot_MICS.h" // MICS4514 sensor library
 
 // OLED display library
 #include <U8g2lib.h>
@@ -70,7 +71,12 @@ static Bsec bme680;
 static PMS pms(pmsSerial);
 
 // -- MICS6814 sensors instances
-static MiCS6814 gas;
+static MiCS6814 gas;                    // MICS6814 sensor instance
+static DFRobot_MICS_I2C mics4514;      // MICS4514 sensor instance
+
+// -- MICS4514 sensor constants (from DFRobot library)
+#define MICS4514_WARMUP_TIME_MIN    3   // Minimum warmup time in minutes
+#define MICS4514_I2C_ADDR          0x75 // Default I2C address
 
 // -- Create a new state machine instance
 static state_machine_t mainStateMachine;
@@ -307,40 +313,83 @@ void setup()
   // MICS6814 ++++++++++++++++++++++++++++++++++++
   vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
-  if (gas.begin())
-  { // Connect to sensor using default I2C address (0x04)
-    log_i("MICS6814 sensor detected, initializing...\n");
-    sensorData_accumulate.status.MICS6814Sensor = true;
-    gas.powerOn(); // turn on heating element and led
-    gas.ledOn();
-    vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-
-    sensorR0Value_t r0Values;
-    r0Values.redSensor = gas.getBaseResistance(CH_RED);
-    r0Values.oxSensor = gas.getBaseResistance(CH_OX);
-    r0Values.nh3Sensor = gas.getBaseResistance(CH_NH3);
-
-    if (tHalSensor_checkMicsValues(&sensorData_accumulate, &r0Values) == STATUS_OK)
-    {
-      log_i("MICS6814 R0 values are already as default!\n");
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-    }
-    else
-    {
-      log_i("Setting MICS6814 R0 values as default... ");
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-
-      vHalSensor_writeMicsValues(&sensorData_accumulate);
-
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-      log_i("Done!\n");
-    }
-    gas.setOffsets(&sensorData_accumulate.pollutionData.sensingResInAirOffset.redSensor);
-  }
-  else
+  // Initialize gas sensor based on configuration type
+  switch (sysStat.gasSensorType)
   {
-    log_e("MICS6814 sensor not detected!\n");
-    vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    case GAS_SENSOR_MICS6814:
+    {
+      if (gas.begin())
+      { // Connect to MICS6814 sensor using default I2C address (0x04)
+        log_i("MICS6814 sensor detected, initializing...\n");
+        sensorData_accumulate.status.MICS6814Sensor = true;
+        gas.powerOn(); // turn on heating element and led
+        gas.ledOn();
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+
+        sensorR0Value_t r0Values;
+        r0Values.redSensor = gas.getBaseResistance(CH_RED);
+        r0Values.oxSensor = gas.getBaseResistance(CH_OX);
+        r0Values.nh3Sensor = gas.getBaseResistance(CH_NH3);
+
+        if (tHalSensor_checkMicsValues(&sensorData_accumulate, &r0Values) == STATUS_OK)
+        {
+          log_i("MICS6814 R0 values are already as default!\n");
+          vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        }
+        else
+        {
+          log_i("Setting MICS6814 R0 values as default... ");
+          vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+
+          vHalSensor_writeMicsValues(&sensorData_accumulate);
+
+          vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+          log_i("Done!\n");
+        }
+        gas.setOffsets(&sensorData_accumulate.pollutionData.sensingResInAirOffset.redSensor);
+      }
+      else
+      {
+        log_e("MICS6814 sensor not detected!\n");
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      }
+      break;
+    }
+
+    case GAS_SENSOR_MICS4514:
+    {
+      log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...\n");
+
+      if (mics4514.begin())
+      { // Connect to MICS4514 sensor using I2C
+        log_i("MICS4514 sensor detected, initializing...\n");
+        sensorData_accumulate.status.MICS4514Sensor = true;
+
+        // Start sensor warmup process
+        log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
+        mics4514.warmUpTime(MICS4514_WARMUP_TIME_MIN);
+
+        // Initialize MICS4514 specific data
+        sensorData_accumulate.mics4514Data.warmupComplete = 0;
+        sensorData_accumulate.mics4514Data.powerState = 1;
+
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        log_i("MICS4514 initialization complete!\n");
+      }
+      else
+      {
+        log_e("MICS4514 sensor not detected!\n");
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      }
+      break;
+    }
+
+    default:
+    {
+      log_e("Unknown gas sensor type: %d\n", sysStat.gasSensorType);
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      break;
+    }
   }
   //+++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -731,6 +780,7 @@ void loop()
     //------------------------------------------------------------------------------------------------------------------------
 
     // READING MICS6814
+    // Gas sensor reading (MICS6814 or MICS4514)
     if (sensorData_accumulate.status.MICS6814Sensor)
     {
       log_i("Sampling MICS6814 sensor...");
@@ -786,6 +836,69 @@ void loop()
       if (mics_read_success)
       {
         log_i("MICS6814 measurement #%d completed successfully", measStat.measurement_count + 1);
+      }
+    }
+    else if (sensorData_accumulate.status.MICS4514Sensor)
+    {
+      log_i("Sampling MICS4514 sensor...");
+      err.count = 0;
+      // Attempt to read MICS4514 sensor with maximum retries
+      bool mics_read_success = false;
+      for (int retry = 0; retry < MAX_SENSOR_RETRIES; retry++)
+      {
+        MICS4514SensorReading_t micsLocData;
+
+        // Read gas concentrations from MICS4514 using DFRobot library
+        // Note: DFRobot library returns values in PPM
+        micsLocData.carbonMonoxide = mics4514.getGasData(CO);        // Get CO in PPM
+        micsLocData.nitrogenDioxide = mics4514.getGasData(NO2);      // Get NO2 in PPM
+        micsLocData.ammonia = mics4514.getGasData(NH3);              // Get NH3 in PPM
+
+        if ((micsLocData.carbonMonoxide < 0) || (micsLocData.nitrogenDioxide < 0) || (micsLocData.ammonia < 0))
+        {
+          err.count++;
+          log_w("MICS4514 sensor reading failed, attempt %d/%d", retry + 1, MAX_SENSOR_RETRIES);
+          if (retry == (MAX_SENSOR_RETRIES - 1)) // Last attempt failed
+          {
+            log_e("Error while sampling MICS4514 sensor after %d attempts!", MAX_SENSOR_RETRIES);
+            err.MICSfails++;
+            break;
+          }
+          delay(1000);
+          continue;
+        }
+
+        // Successfully read sensor data - convert PPM to ug/m3
+        mics_read_success = true;
+
+        // Convert CO from PPM to ug/m3 (using same molar mass as MICS6814)
+        micsLocData.carbonMonoxide = vGeneric_convertPpmToUgM3(micsLocData.carbonMonoxide, sensorData_accumulate.pollutionData.molarMass.carbonMonoxide);
+        log_v("CO(ug/m3): %.3f", micsLocData.carbonMonoxide);
+        sensorData_accumulate.mics4514Data.data.carbonMonoxide += micsLocData.carbonMonoxide;
+        sensorData_single.mics4514Data.data.carbonMonoxide = micsLocData.carbonMonoxide;
+
+        // Convert NO2 from PPM to ug/m3 (with optional BME680 compensation)
+        micsLocData.nitrogenDioxide = vGeneric_convertPpmToUgM3(micsLocData.nitrogenDioxide, sensorData_accumulate.pollutionData.molarMass.nitrogenDioxide);
+        if (sensorData_accumulate.status.BME680Sensor)
+        {
+          micsLocData.nitrogenDioxide = fHalSensor_no2AndVocCompensation(micsLocData.nitrogenDioxide, &localData, &sensorData_accumulate);
+        }
+        log_v("NOx(ug/m3): %.3f", micsLocData.nitrogenDioxide);
+        sensorData_accumulate.mics4514Data.data.nitrogenDioxide += micsLocData.nitrogenDioxide;
+        sensorData_single.mics4514Data.data.nitrogenDioxide = micsLocData.nitrogenDioxide;
+
+        // Convert NH3 from PPM to ug/m3
+        micsLocData.ammonia = vGeneric_convertPpmToUgM3(micsLocData.ammonia, sensorData_accumulate.pollutionData.molarMass.ammonia);
+        log_v("NH3(ug/m3): %.3f\n", micsLocData.ammonia);
+        sensorData_accumulate.mics4514Data.data.ammonia += micsLocData.ammonia;
+        sensorData_single.mics4514Data.data.ammonia = micsLocData.ammonia;
+
+        break;
+      }
+
+      if (mics_read_success)
+      {
+        log_i("MICS4514 measurement #%d completed successfully", measStat.measurement_count + 1);
       }
     }
 
@@ -1032,9 +1145,28 @@ void loop()
     sendData.PM1 = sensorData_accumulate.airQualityData.particleMicron1;
     sendData.PM25 = sensorData_accumulate.airQualityData.particleMicron25;
     sendData.PM10 = sensorData_accumulate.airQualityData.particleMicron10;
-    sendData.MICS_CO = sensorData_accumulate.pollutionData.data.carbonMonoxide;
-    sendData.MICS_NO2 = sensorData_accumulate.pollutionData.data.nitrogenDioxide;
-    sendData.MICS_NH3 = sensorData_accumulate.pollutionData.data.ammonia;
+    // Assign gas sensor data based on sensor type
+    switch (sysStat.gasSensorType)
+    {
+      case GAS_SENSOR_MICS6814:
+        sendData.MICS_CO = sensorData_accumulate.pollutionData.data.carbonMonoxide;
+        sendData.MICS_NO2 = sensorData_accumulate.pollutionData.data.nitrogenDioxide;
+        sendData.MICS_NH3 = sensorData_accumulate.pollutionData.data.ammonia;
+        break;
+
+      case GAS_SENSOR_MICS4514:
+        sendData.MICS_CO = sensorData_accumulate.mics4514Data.data.carbonMonoxide;
+        sendData.MICS_NO2 = sensorData_accumulate.mics4514Data.data.nitrogenDioxide;
+        sendData.MICS_NH3 = sensorData_accumulate.mics4514Data.data.ammonia;
+        break;
+
+      default:
+        // Default to zero if no gas sensor configured
+        sendData.MICS_CO = 0.0;
+        sendData.MICS_NO2 = 0.0;
+        sendData.MICS_NH3 = 0.0;
+        break;
+    }
     sendData.ozone = sensorData_accumulate.ozoneData.ozone;
     sendData.MSP = sensorData_accumulate.MSP;
 
