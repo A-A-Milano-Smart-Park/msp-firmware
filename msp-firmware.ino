@@ -455,6 +455,8 @@ void loop()
       log_i("=== Firmware Update Tests Completed ===");
 #endif
 
+      // Firmware update check now handled AFTER data transmission for priority
+
       mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
       mainStateMachine.isFirstTransition = true;
       mainStateMachine.prev_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
@@ -485,31 +487,6 @@ void loop()
       measStat.curr_minutes = timeinfo.tm_min;
       measStat.curr_seconds = timeinfo.tm_sec;
       measStat.curr_total_seconds = measStat.curr_minutes * SEC_IN_MIN + measStat.curr_seconds;
-
-      // Check if daily NTP sync is needed (at 00:00:00)
-      int current_day = timeinfo.tm_yday; // Day of year (0-365)
-      if ((timeinfo.tm_hour == 0 && timeinfo.tm_min == 0 && timeinfo.tm_sec == 0) &&
-          (current_day != sysData.ntp_last_sync_day))
-      {
-        log_i("Daily NTP sync needed - triggering time synchronization");
-        sysData.ntp_last_sync_day = current_day;
-        requestNetworkConnection(); // This will trigger NTP sync
-        mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
-        break;
-      }
-
-      // Check for firmware updates at 00:00:00 if fwAutoUpgrade is enabled
-      // and if there is a valid internet connection
-      static int last_fw_check_day = -1;
-      if ((current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
-      {
-        log_i("Daily firmware update check triggered");
-
-        if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
-        {
-          last_fw_check_day = current_day;
-        }
-      }
 
       // Calculate if we are exactly at the start of a minute (00 seconds)
       // We trigger measurement only when seconds == 0, ensuring exact minute alignment
@@ -1134,6 +1111,57 @@ void loop()
 
     // After transmission, system is now aligned - next cycles will be full measurements
     log_i("Data sent successfully. System now aligned - next cycles will collect %d measurements", measStat.max_measurements);
+
+    // PRIORITY: Handle daily maintenance AFTER data transmission completes
+    // This ensures measurement data transmission always has the highest priority
+    if (getLocalTime(&timeinfo))
+    {
+      int current_day = timeinfo.tm_yday; // Day of year (0-365)
+
+      // 1. Check for firmware updates first (if at 00:00:00)
+      static int last_fw_check_day = -1;
+      if ((timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
+          (current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
+      {
+        // Check if we have internet connectivity before attempting firmware update
+        if (isInternetConnected())
+        {
+          log_i("Daily firmware update check AFTER data transmission - internet available");
+          if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
+          {
+            last_fw_check_day = current_day;
+          }
+        }
+        else
+        {
+          log_w("Firmware update check needed but no internet connectivity - will retry later");
+          log_i("Firmware update check deferred until internet connectivity is restored");
+          // Don't mark as checked - will retry in next cycle when internet is available
+        }
+      }
+
+      // 2. Trigger NTP sync if needed (at 00:00:00 and haven't synced today)
+      if ((timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
+          (current_day != sysData.ntp_last_sync_day))
+      {
+        // Check if we have internet connectivity before attempting NTP sync
+        if (isInternetConnected())
+        {
+          log_i("Daily NTP sync needed AFTER data transmission - internet available, triggering time synchronization");
+          sysData.ntp_last_sync_day = current_day;
+          requestTimeSync(); // Request ONLY time sync, not full connection
+          mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
+          mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+          break;
+        }
+        else
+        {
+          log_w("Daily NTP sync needed but no internet connectivity - will retry later");
+          log_i("NTP sync deferred until internet connectivity is restored");
+          // Don't mark as synced - will retry in next cycle when internet is available
+        }
+      }
+    }
 
     mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
     mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT; // go to wait for timeout state
