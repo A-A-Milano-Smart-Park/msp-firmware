@@ -220,6 +220,7 @@ typedef struct __SYSTEM_STATUS__
   uint8_t server_ok;
   uint8_t fwAutoUpgrade;
   uint8_t gasSensorType; // 0 = MICS6814, 1 = MICS4514, etc.
+  uint8_t forceGitHubUpdate; // Flag to trigger force GitHub firmware download when tests are enabled
 } systemStatus_t;
 
 typedef struct __NETWORK__

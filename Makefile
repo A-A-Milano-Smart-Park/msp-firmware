@@ -23,7 +23,7 @@ LIBRARIES_URLS := \
 
 # The FQBN is the core, followed by the board.
 CORE_NAME := $(shell echo $(CORE) | cut -f1 -d@)
-FQBN := $(CORE_NAME):$(BOARD)
+FQBN := $(CORE_NAME):$(BOARD):PartitionScheme=min_spiffs,FlashMode=dio,FlashFreq=80,FlashSize=4M
 
 # Treat all warnings as errors.
 BUILDPROP := compiler.warning_flags.all='-Wall -Wextra'
