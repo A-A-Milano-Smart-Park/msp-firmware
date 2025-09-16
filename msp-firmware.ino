@@ -74,13 +74,13 @@ static Bsec bme680;
 // -- PMS5003 sensor instance
 static PMS pms(pmsSerial);
 
-// -- MICS6814 sensors instances
-static MiCS6814 gas;              // MICS6814 sensor instance
-static DFRobot_MICS_I2C mics4514; // MICS4514 sensor instance
-
 // -- MICS4514 sensor constants (from DFRobot library)
 #define MICS4514_WARMUP_TIME_MIN 3 // Minimum warmup time in minutes
 #define MICS4514_I2C_ADDR 0x75     // Default I2C address
+
+// -- MICS6814 sensors instances
+static MiCS6814 gas;              // MICS6814 sensor instance
+static DFRobot_MICS_I2C mics4514(&Wire, MICS4514_I2C_ADDR); // MICS4514 sensor instance
 
 // -- Create a new state machine instance
 static state_machine_t mainStateMachine;
@@ -408,6 +408,8 @@ void setup()
       log_i("MICS4514 sensor detected, initializing...\n");
       sensorData_accumulate.status.MICS4514Sensor = true;
 
+      mics4514.wakeUpMode();
+
       // Start sensor warmup process
       log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
       mics4514.warmUpTime(MICS4514_WARMUP_TIME_MIN);
@@ -682,10 +684,16 @@ void loop()
         }
 
         // Only set first transition flag when coming from states that require reset
-        if ((mainStateMachine.prev_state == SYS_STATE_WAIT_FOR_NTP_SYNC) || (mainStateMachine.prev_state == SYS_STATE_SEND_DATA))
+        // Don't reset cycle when returning from NTP sync during normal operations
+        if (mainStateMachine.prev_state == SYS_STATE_SEND_DATA)
         {
           mainStateMachine.isFirstTransition = true;
-          log_i("Setting first transition flag for new measurement cycle");
+          log_i("Setting first transition flag for new measurement cycle after data transmission");
+        }
+        else if (mainStateMachine.prev_state == SYS_STATE_WAIT_FOR_NTP_SYNC)
+        {
+          log_i("Returning from NTP sync - continuing existing measurement cycle without reset");
+          // Don't set isFirstTransition to avoid disrupting ongoing measurement cycle
         }
         mainStateMachine.prev_state = SYS_STATE_WAIT_FOR_TIMEOUT;
         mainStateMachine.next_state = SYS_STATE_READ_SENSORS; // go to read sensors state
@@ -1337,56 +1345,57 @@ void loop()
     {
       int current_day = timeinfo.tm_yday; // Day of year (0-365)
 
-      // 1. Check for firmware updates first (if at 00:00:00)
+      // Combined firmware update and NTP sync check (at 00:00:00)
       static int last_fw_check_day = -1;
-      if ((timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
-          (current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
-      {
-        // Check if we have network connectivity (WiFi or GSM) for firmware update
-        // Use direct network connectivity check instead of relying only on internetConnected flag
-        bool hasNetworkForFirmware = (WiFi.status() == WL_CONNECTED) || sysStat.connection;
+      bool needsFirmwareCheck = (timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
+                               (current_day != last_fw_check_day) && sysStat.fwAutoUpgrade;
+      bool needsNtpSync = (timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
+                         (current_day != sysData.ntp_last_sync_day);
 
-        if (hasNetworkForFirmware)
-        {
-          log_i("Daily firmware update check AFTER data transmission - network connection available");
-          if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
-          {
-            last_fw_check_day = current_day;
-            log_i("Firmware update check completed successfully for day %d", current_day);
-          }
-          else
-          {
-            log_w("Firmware update check failed - will retry tomorrow");
-            // Don't mark as checked - will retry next day
-          }
-        }
-        else
-        {
-          log_w("Firmware update check needed but no network connectivity - will retry later");
-          log_i("Firmware update check deferred until network connectivity is restored");
-          // Don't mark as checked - will retry in next cycle when network is available
-        }
-      }
-
-      // 2. Trigger NTP sync if needed (at 00:00:00 and haven't synced today)
-      if ((timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
-          (current_day != sysData.ntp_last_sync_day))
+      if (needsFirmwareCheck || needsNtpSync)
       {
-        // Check if we have internet connectivity before attempting NTP sync
+        // Check if we have internet connectivity for both operations
         if (isInternetConnected())
         {
-          log_i("Daily NTP sync needed AFTER data transmission - internet available, triggering time synchronization");
-          sysData.ntp_last_sync_day = current_day;
-          requestTimeSync(); // Request ONLY time sync, not full connection
-          mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
-          mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
-          break;
+          // Perform firmware update check first if needed
+          if (needsFirmwareCheck)
+          {
+            log_i("Daily firmware update check AFTER data transmission - internet available");
+            if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
+            {
+              last_fw_check_day = current_day;
+              log_i("Firmware update check completed successfully for day %d", current_day);
+            }
+            else
+            {
+              log_w("Firmware update check failed - will retry tomorrow");
+              // Don't mark as checked - will retry next day
+            }
+          }
+
+          // Perform NTP sync if needed
+          if (needsNtpSync)
+          {
+            log_i("Daily NTP sync needed AFTER data transmission - internet available, triggering time synchronization");
+            sysData.ntp_last_sync_day = current_day;
+            requestTimeSync(); // Request ONLY time sync, not full connection
+            mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
+            mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+            break;
+          }
         }
         else
         {
-          log_w("Daily NTP sync needed but no internet connectivity - will retry later");
-          log_i("NTP sync deferred until internet connectivity is restored");
-          // Don't mark as synced - will retry in next cycle when internet is available
+          if (needsFirmwareCheck)
+          {
+            log_w("Firmware update check needed but no internet connectivity - will retry later");
+          }
+          if (needsNtpSync)
+          {
+            log_w("Daily NTP sync needed but no internet connectivity - will retry later");
+          }
+          log_i("Both firmware check and NTP sync deferred until internet connectivity is restored");
+          // Don't mark either as completed - will retry in next cycle when internet is available
         }
       }
     }
