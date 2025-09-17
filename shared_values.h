@@ -135,6 +135,20 @@ typedef struct __MICS6814_DATA__
   MICS6814SensorReading_t data;
 } MICS6814Data_t;
 
+typedef struct __MICS4514_DATA_
+{
+  float carbonMonoxide;  // Carbon monoxide CO - mapped from DFRobot CO reading
+  float nitrogenDioxide; // Nitrogen dioxide NO2 - mapped from DFRobot NO2 reading
+  float ammonia;         // Ammonia NH3 - mapped from DFRobot NH3 reading
+} MICS4514SensorReading_t;
+
+typedef struct __MICS4514_DATA__
+{
+  MICS4514SensorReading_t data;
+  uint8_t warmupComplete; // Track if sensor warmup is complete
+  uint8_t powerState;     // Track current power state
+} MICS4514Data_t;
+
 typedef struct __ZE25_O3_VAL__
 {
   float ozone;
@@ -154,7 +168,8 @@ typedef struct __SENSOR_DATA__
   peripheralStatus_t status;
   bme680Data_t gasData;
   pms5003Data_t airQualityData;
-  MICS6814Data_t pollutionData;
+  MICS6814Data_t pollutionData;     // Used when gasSensorType == GAS_SENSOR_MICS6814
+  MICS4514Data_t mics4514Data;      // Used when gasSensorType == GAS_SENSOR_MICS4514
   ze25Data_t ozoneData;
   compensationsParams_t compParams; // Variables for compensation (MICS6814-OX and BME680-VOC)
   int8_t MSP;
@@ -187,6 +202,13 @@ typedef enum __MSP_ELEMENT_INDEX__
   MSP_INDEX_MAX = 3
 } msp_index_t;
 
+//-- Gas sensor types --
+typedef enum __GAS_SENSOR_TYPE__
+{
+  GAS_SENSOR_MICS6814 = 0,
+  GAS_SENSOR_MICS4514 = 1
+} gas_sensor_type_t;
+
 //-- system status --
 typedef struct __SYSTEM_STATUS__
 {
@@ -197,6 +219,8 @@ typedef struct __SYSTEM_STATUS__
   uint8_t datetime;
   uint8_t server_ok;
   uint8_t fwAutoUpgrade;
+  uint8_t gasSensorType; // 0 = MICS6814, 1 = MICS4514, etc.
+  uint8_t forceGitHubUpdate; // Flag to trigger force GitHub firmware download when tests are enabled
 } systemStatus_t;
 
 typedef struct __NETWORK__

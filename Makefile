@@ -18,11 +18,12 @@ LIBRARIES := \
 	TinyGSM@0.11.7 \
 	ArduinoJson@7.4.2
 LIBRARIES_URLS := \
-	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library
+	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library \
+	https://github.com/DFRobot/DFRobot_MICS
 
 # The FQBN is the core, followed by the board.
 CORE_NAME := $(shell echo $(CORE) | cut -f1 -d@)
-FQBN := $(CORE_NAME):$(BOARD)
+FQBN := $(CORE_NAME):$(BOARD):PartitionScheme=min_spiffs,FlashMode=dio,FlashFreq=80,FlashSize=4M
 
 # Treat all warnings as errors.
 BUILDPROP := compiler.warning_flags.all='-Wall -Wextra'

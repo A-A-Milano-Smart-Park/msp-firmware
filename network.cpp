@@ -28,6 +28,7 @@
 #include "sdcard.h"
 #include "sensors.h"
 #include "config.h"
+#include "shared_values.h"
 #include "firmware_update.h"
 
 // -- Network Configuration Constants
@@ -1343,7 +1344,18 @@ static void networkTask(void *pvParameters)
             else if (events & NET_EVT_DISCONNECT_REQ)
             {
                 log_i("Disconnect request received");
-                updateNetworkState(NETWRK_EVT_DEINIT_CONNECTION);
+
+                // Check if maintenance operations are pending before disconnecting
+                if (isMaintenancePending())
+                {
+                    log_i("Maintenance operations pending - ignoring disconnect request");
+                    log_i("Network will remain connected for firmware updates or NTP sync");
+                }
+                else
+                {
+                    log_i("No maintenance pending - proceeding with disconnect");
+                    updateNetworkState(NETWRK_EVT_DEINIT_CONNECTION);
+                }
 
                 // Clear the processed event bit
                 xEventGroupClearBits(networkEventGroup, NET_EVT_DISCONNECT_REQ);
@@ -1725,7 +1737,13 @@ static void networkTask(void *pvParameters)
                 vHalSensor_printMeasurementsOnSerial(&currentData, &localSensorData);
 
                 // Handle network disconnection for power saving and connection health
-                if ((sysStatus.use_modem) && ((networkState.gsmConnected) || (modem)))
+                // Check if maintenance operations are pending before disconnecting
+                if (isMaintenancePending())
+                {
+                    log_i("Maintenance operations pending - keeping network connection active");
+                    log_i("Network will remain connected for firmware updates or NTP sync");
+                }
+                else if ((sysStatus.use_modem) && ((networkState.gsmConnected) || (modem)))
                 {
                     // Always disconnect cellular after transmission for power saving
                     if (vHalNetwork_modemDisconnect())
@@ -2065,4 +2083,66 @@ void clearFirmwareDownloadInProgress(void)
     {
         log_e("Failed to acquire network state mutex for firmware download flag");
     }
+}
+
+/**
+ * @brief Check if firmware update or NTP sync maintenance is pending
+ * @return true if maintenance operations are pending, false otherwise
+ */
+bool isMaintenancePending(void)
+{
+    // Create local copies to safely access the data with mutex protection
+    systemStatus_t localSysStat;
+    systemData_t localSysData;
+
+    // Get safe copies of system status and data using the existing mechanism
+    Msp_getSystemStatus(&localSysStat);
+
+    // We need a similar function for system data - let's create one
+    extern void Msp_getSystemData(systemData_t *data);
+    Msp_getSystemData(&localSysData);
+
+    tm timeinfo;
+    if (!getLocalTime(&timeinfo))
+    {
+        return false; // Can't check without valid time
+    }
+
+    int current_day = timeinfo.tm_yday; // Day of year (0-365)
+
+    // Check if firmware update is pending (only during midnight window and not yet completed)
+    bool firmwareUpdatePending = false;
+    if (localSysStat.fwAutoUpgrade)
+    {
+        // Firmware update is pending only during midnight window (00:00-00:59)
+        // and only if it hasn't been completed yet for this day
+        if (timeinfo.tm_hour == 0)
+        {
+            firmwareUpdatePending = true;
+        }
+    }
+
+    // Check if NTP sync is pending (only during midnight window and different day)
+    bool ntpSyncPending = (timeinfo.tm_hour == 0) &&
+                         (current_day != localSysData.ntp_last_sync_day);
+
+    // Also check if there's data pending in the send queue
+    bool dataPending = false;
+    extern QueueHandle_t sendDataQueue;
+    if (sendDataQueue != NULL)
+    {
+        int queueSize = uxQueueMessagesWaiting(sendDataQueue);
+        dataPending = (queueSize > 0);
+    }
+
+    // Log maintenance status for debugging
+    if (firmwareUpdatePending || ntpSyncPending || dataPending)
+    {
+        log_i("Maintenance/data pending - FW update: %s, NTP sync: %s, Data queue: %d",
+              firmwareUpdatePending ? "YES" : "NO",
+              ntpSyncPending ? "YES" : "NO",
+              dataPending ? uxQueueMessagesWaiting(sendDataQueue) : 0);
+    }
+
+    return firmwareUpdatePending || ntpSyncPending || dataPending;
 }

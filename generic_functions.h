@@ -25,7 +25,7 @@
  * @param   value 
  * @return  String 
  *************************************************/
-void vGeneric_dspFloatToComma(float value, char *buffer, size_t bufferSize);
+void vGeneric_dspFloatToComma(const float value, char *buffer, const size_t bufferSize);
 
 /*************************************************
  * @brief   converts float values in strings 
@@ -35,7 +35,7 @@ void vGeneric_dspFloatToComma(float value, char *buffer, size_t bufferSize);
  * @param   value 
  * @return  String 
  ************************************************/
-String vGeneric_floatToComma(float value);
+String vGeneric_floatToComma(const float value);
 
 /************************************************************
  * @brief calculates ug/m3 from a gas ppm concentration
@@ -44,7 +44,7 @@ String vGeneric_floatToComma(float value);
  * @param mm 
  * @return float 
  ***********************************************************/
-float vGeneric_convertPpmToUgM3(float ppm, float mm);
+float vGeneric_convertPpmToUgM3(const float ppm, const float mm);
 
 
 #endif

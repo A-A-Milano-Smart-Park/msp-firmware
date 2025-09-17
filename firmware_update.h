@@ -17,10 +17,17 @@
 
 // Function declarations
 bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetworkInfo_t *devInfo);
+bool bHalFirmware_downloadToSDCard(const String &downloadUrl);
 bool bHalFirmware_compareVersions(const String &currentVersion, const String &remoteVersion);
 bool bHalFirmware_downloadBinaryFirmware(const String &downloadUrl, systemData_t *sysData, systemStatus_t *sysStatus, deviceNetworkInfo_t *devInfo);
 bool bHalFirmware_performOTAUpdate(const String &firmwarePath);
 bool bHalFirmware_forceOTAUpdate(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetworkInfo_t *devInfo);
+
+// SD Card firmware management functions
+bool bHalFirmware_forceFlashFromSDCard(const char* firmwarePath);
+bool bHalFirmware_validateAndFlashFromSD(const char* firmwarePath, bool forceUpdate);
+bool bHalFirmware_checkVersionAndFlash(const char* firmwarePath);
+String bHalFirmware_extractVersionFromFile(const char* firmwarePath);
 
 // ESP-IDF OTA management functions
 void vHalFirmware_printOTAInfo();
@@ -44,6 +51,7 @@ void vHalFirmware_testGitHubAPI();
 void vHalFirmware_testConfigParsing(systemStatus_t *sysStatus);
 void vHalFirmware_testOTAManagement();
 void vHalFirmware_testForceOTAUpdate(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetworkInfo_t *devInfo);
+bool bHalFirmware_forceUpdateFromGitHub(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetworkInfo_t *devInfo);
 #endif
 
 #endif // FIRMWARE_UPDATE_H
