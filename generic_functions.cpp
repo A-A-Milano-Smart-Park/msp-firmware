@@ -29,7 +29,7 @@
  * @param buffer 
  * @param bufferSize 
  ***************************************************************/
-void vGeneric_dspFloatToComma(float value, char *buffer, size_t bufferSize)
+void vGeneric_dspFloatToComma(const float value, char *buffer, const size_t bufferSize)
 {
   int intPart = (int)value;
   int decimalPart = (int) (fabs(value - intPart) * 100);
@@ -44,7 +44,7 @@ void vGeneric_dspFloatToComma(float value, char *buffer, size_t bufferSize)
  * @param   value 
  * @return  String 
  *********************************************************/
-String vGeneric_floatToComma(float value)
+String vGeneric_floatToComma(const float value)
 {
   String convert = String(value, 3);
   convert.replace(STR_DOT, STR_COMMA);
@@ -59,7 +59,7 @@ String vGeneric_floatToComma(float value)
  * @param mm 
  * @return float 
  ***********************************************************/
-float vGeneric_convertPpmToUgM3(float ppm, float mm)
+float vGeneric_convertPpmToUgM3(const float ppm, const float mm)
 {
   // Standard conversion: µg/m³ = ppm × (molecular_weight / molar_volume_at_STP) × conversion_factor
   return ppm * mm * PPM_TO_UGM3_FACTOR / MOLAR_VOLUME_STP;

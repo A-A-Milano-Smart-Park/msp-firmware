@@ -130,6 +130,8 @@ void vMspInit_MeasInfo(void);
 
 void Msp_getSystemStatus(systemStatus_t *stat);
 
+void Msp_getSystemData(systemData_t *data);
+
 //*******************************************************************************************************************************
 
 void Msp_getSystemStatus(systemStatus_t *stat)
@@ -138,6 +140,21 @@ void Msp_getSystemStatus(systemStatus_t *stat)
   vMspOs_takeDataAccessMutex();
 
   memcpy(stat, &sysStat, sizeof(systemStatus_t));
+
+  vMspOs_giveDataAccessMutex();
+}
+
+/**
+ * @brief Get a safe copy of system data structure
+ * @param data Pointer to systemData_t structure to copy into
+ */
+void Msp_getSystemData(systemData_t *data)
+{
+  if (data == NULL) return;
+
+  vMspOs_takeDataAccessMutex();
+
+  *data = sysData; // Use assignment operator for proper C++ object copying
 
   vMspOs_giveDataAccessMutex();
 }
@@ -919,6 +936,8 @@ void loop()
         micsLocData.nitrogenDioxide = mics4514.getGasData(NO2); // Get NO2 in PPM
         micsLocData.ammonia = mics4514.getGasData(NH3);         // Get NH3 in PPM
 
+        log_v("CO: %.3f PPM - NO2: %.3f PPM - NH3: %.3f PPM", micsLocData.carbonMonoxide, micsLocData.nitrogenDioxide, micsLocData.ammonia);
+
         if ((micsLocData.carbonMonoxide < 0) || (micsLocData.nitrogenDioxide < 0) || (micsLocData.ammonia < 0))
         {
           err.count++;
@@ -1345,31 +1364,50 @@ void loop()
     {
       int current_day = timeinfo.tm_yday; // Day of year (0-365)
 
-      // Combined firmware update and NTP sync check (at 00:00:00)
+      // Combined firmware update and NTP sync check
       static int last_fw_check_day = -1;
-      bool needsFirmwareCheck = (timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
-                               (current_day != last_fw_check_day) && sysStat.fwAutoUpgrade;
+      static bool fw_update_needed = true;
+
+      // Set firmware update flag at midnight (00:00:00) once per day
+      if ((timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
+          (current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
+      {
+        log_i("Setting firmware update flag at midnight for day %d", current_day);
+        fw_update_needed = true;
+        // Don't mark last_fw_check_day yet - only mark it after successful check
+      }
+
       bool needsNtpSync = (timeinfo.tm_hour == 0 && timeinfo.tm_min == 0) &&
                          (current_day != sysData.ntp_last_sync_day);
 
-      if (needsFirmwareCheck || needsNtpSync)
+      if (fw_update_needed || needsNtpSync)
       {
-        // Check if we have internet connectivity for both operations
+        // Request network connection for maintenance operations
+        if (!isInternetConnected())
+        {
+          log_i("Maintenance operations needed - requesting network connection");
+          requestNetworkConnection();
+          // Wait a moment for connection to establish
+          vTaskDelay(pdMS_TO_TICKS(2000));
+        }
+
+        // Check if we now have internet connectivity for operations
         if (isInternetConnected())
         {
-          // Perform firmware update check first if needed
-          if (needsFirmwareCheck)
+          // Perform firmware update check if flag is set
+          if (fw_update_needed)
           {
-            log_i("Daily firmware update check AFTER data transmission - internet available");
+            log_i("Firmware update flag set - checking for updates with internet available");
             if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
             {
-              last_fw_check_day = current_day;
+              fw_update_needed = false; // Clear flag after successful check
+              last_fw_check_day = current_day; // Mark as completed for this day
               log_i("Firmware update check completed successfully for day %d", current_day);
             }
             else
             {
-              log_w("Firmware update check failed - will retry tomorrow");
-              // Don't mark as checked - will retry next day
+              log_w("Firmware update check failed - flag remains set for retry when internet is available");
+              // Keep flag set for retry in next cycle when internet is available
             }
           }
 
@@ -1386,16 +1424,16 @@ void loop()
         }
         else
         {
-          if (needsFirmwareCheck)
+          if (fw_update_needed)
           {
-            log_w("Firmware update check needed but no internet connectivity - will retry later");
+            log_w("Firmware update check needed but failed to establish internet connectivity - flag remains set for retry");
           }
           if (needsNtpSync)
           {
-            log_w("Daily NTP sync needed but no internet connectivity - will retry later");
+            log_w("Daily NTP sync needed but failed to establish internet connectivity - will retry later");
           }
-          log_i("Both firmware check and NTP sync deferred until internet connectivity is restored");
-          // Don't mark either as completed - will retry in next cycle when internet is available
+          log_i("Firmware check and NTP sync deferred until internet connectivity can be established");
+          // Don't mark any as completed - will retry in next cycle when internet is available
         }
       }
     }
