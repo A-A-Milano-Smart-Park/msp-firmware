@@ -70,13 +70,13 @@ static Bsec bme680;
 // -- PMS5003 sensor instance
 static PMS pms(pmsSerial);
 
-// -- MICS6814 sensors instances
-static MiCS6814 gas;                    // MICS6814 sensor instance
-static DFRobot_MICS_I2C mics4514;      // MICS4514 sensor instance
-
 // -- MICS4514 sensor constants (from DFRobot library)
-#define MICS4514_WARMUP_TIME_MIN    3   // Minimum warmup time in minutes
-#define MICS4514_I2C_ADDR          0x75 // Default I2C address
+#define MICS4514_WARMUP_TIME_MIN 3 // Minimum warmup time in minutes
+#define MICS4514_I2C_ADDR 0x75     // Default I2C address
+
+// -- MICS6814 sensors instances
+static MiCS6814 gas;              // MICS6814 sensor instance
+static DFRobot_MICS_I2C mics4514(&Wire, MICS4514_I2C_ADDR); // MICS4514 sensor instance
 
 // -- Create a new state machine instance
 static state_machine_t mainStateMachine;
@@ -360,10 +360,12 @@ void setup()
     {
       log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...\n");
 
-      if (mics4514.begin())
-      { // Connect to MICS4514 sensor using I2C
-        log_i("MICS4514 sensor detected, initializing...\n");
-        sensorData_accumulate.status.MICS4514Sensor = true;
+    if (mics4514.begin())
+    { // Connect to MICS4514 sensor using I2C
+      log_i("MICS4514 sensor detected, initializing...\n");
+      sensorData_accumulate.status.MICS4514Sensor = true;
+
+      mics4514.wakeUpMode();
 
         // Start sensor warmup process
         log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
@@ -1171,24 +1173,24 @@ void loop()
     // Assign gas sensor data based on sensor type
     switch (sysStat.gasSensorType)
     {
-      case GAS_SENSOR_MICS6814:
-        sendData.MICS_CO = sensorData_accumulate.pollutionData.data.carbonMonoxide;
-        sendData.MICS_NO2 = sensorData_accumulate.pollutionData.data.nitrogenDioxide;
-        sendData.MICS_NH3 = sensorData_accumulate.pollutionData.data.ammonia;
-        break;
+    case GAS_SENSOR_MICS6814:
+      sendData.MICS_CO = sensorData_accumulate.pollutionData.data.carbonMonoxide;
+      sendData.MICS_NO2 = sensorData_accumulate.pollutionData.data.nitrogenDioxide;
+      sendData.MICS_NH3 = sensorData_accumulate.pollutionData.data.ammonia;
+      break;
 
-      case GAS_SENSOR_MICS4514:
-        sendData.MICS_CO = sensorData_accumulate.mics4514Data.data.carbonMonoxide;
-        sendData.MICS_NO2 = sensorData_accumulate.mics4514Data.data.nitrogenDioxide;
-        sendData.MICS_NH3 = sensorData_accumulate.mics4514Data.data.ammonia;
-        break;
+    case GAS_SENSOR_MICS4514:
+      sendData.MICS_CO = sensorData_accumulate.mics4514Data.data.carbonMonoxide;
+      sendData.MICS_NO2 = sensorData_accumulate.mics4514Data.data.nitrogenDioxide;
+      sendData.MICS_NH3 = sensorData_accumulate.mics4514Data.data.ammonia;
+      break;
 
-      default:
-        // Default to zero if no gas sensor configured
-        sendData.MICS_CO = 0.0;
-        sendData.MICS_NO2 = 0.0;
-        sendData.MICS_NH3 = 0.0;
-        break;
+    default:
+      // Default to zero if no gas sensor configured
+      sendData.MICS_CO = 0.0;
+      sendData.MICS_NO2 = 0.0;
+      sendData.MICS_NH3 = 0.0;
+      break;
     }
     sendData.ozone = sensorData_accumulate.ozoneData.ozone;
     sendData.MSP = sensorData_accumulate.MSP;

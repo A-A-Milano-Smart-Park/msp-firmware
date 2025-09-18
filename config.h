@@ -91,6 +91,7 @@
 #define JSON_KEY_NTP_SERVER "ntp_server"
 #define JSON_KEY_TIMEZONE "timezone"
 #define JSON_KEY_FW_AUTO_UPGRADE "fw_auto_upgrade"
+#define JSON_KEY_GAS_SENSOR_TYPE "gas_sensor_type"
 
 // MICS Calibration Sub-keys
 #define JSON_KEY_MICS_RED "RED"
