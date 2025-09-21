@@ -42,7 +42,6 @@
 // Enable this flag for production deployments requiring cryptographic verification
 #define SKIP_FIRMWARE_VERSION_CHECK 0
 #define FORCE_GSM_NETWORK_CONNECTION 0
-#define FORCE_DATA_SEND_EACH_MEASURE 0
 
 // API Server Configuration
 #ifndef API_SERVER

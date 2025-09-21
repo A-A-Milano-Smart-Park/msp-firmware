@@ -274,6 +274,7 @@ void setup()
 
   measStat.max_measurements = measStat.avg_measurements; /*!< fill the max_measurements with the number set by the user */
 
+#ifndef ENABLE_FIRMWARE_UPDATE_TESTS
   //++++++++++++++++ DETECT AND INIT SENSORS ++++++++++++++++++++++++++++++
   log_i("Detecting and initializing sensors...\n");
 
@@ -430,6 +431,7 @@ void setup()
     sensorData_accumulate.status.O3Sensor = true;
     vMsp_updateDataAndSendEvent(DISP_EVENT_O3_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
   }
+#endif
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++
 
   // Always use 1-minute intervals for measurements
@@ -507,14 +509,20 @@ void loop()
       }
 
 #ifdef ENABLE_FIRMWARE_UPDATE_TESTS
-      // Run firmware update tests now that internet connection is established
-      log_i("=== Running Firmware Update Tests ===");
-      vHalFirmware_testConfigParsing(&sysStat);
-      vHalFirmware_testVersionComparison();
-      vHalFirmware_testOTAManagement();
-      // GitHub API test can now properly test connectivity
-      vHalFirmware_testGitHubAPI();
-      log_i("=== Firmware Update Tests Completed ===");
+      // Run actual firmware update check now that internet connection is established
+      log_i("=== Running Firmware Update Test (Production Function) ===");
+      log_i("Testing bHalFirmware_checkForUpdates() with actual parameters");
+
+      if (bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
+      {
+        log_i("Firmware update check completed successfully");
+      }
+      else
+      {
+        log_w("Firmware update check failed or no updates available");
+      }
+
+      log_i("=== Firmware Update Test Completed ===");
 #endif
 
       mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;

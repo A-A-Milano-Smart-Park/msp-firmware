@@ -230,8 +230,11 @@ bool bHalFirmware_compareVersions(const String &currentVersion, const String &re
         return true;
     if (remoteMinor < currentMinor)
         return false;
-
+#if (SKIP_FIRMWARE_VERSION_CHECK == 1)
+    return true;
+#else
     return remotePatch > currentPatch;
+#endif
 }
 
 /**
