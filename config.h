@@ -21,6 +21,10 @@
 
 // #define ENABLE_FIRMWARE_UPDATE_TESTS      // enable for FOTA controlled testing
 
+// ===== Debug Configuration =====
+
+// #define ENABLE_I2C_SCANNER                 // enable to scan I2C devices at startup
+
 // ===== Security Configuration =====
 
 // Enhanced Security Features (disabled by default - enable for production)
@@ -36,6 +40,9 @@
 //
 // Note: Basic firmware validation (header, size, format) is always enabled
 // Enable this flag for production deployments requiring cryptographic verification
+#define SKIP_FIRMWARE_VERSION_CHECK 0
+#define FORCE_GSM_NETWORK_CONNECTION 0
+#define FORCE_DATA_SEND_EACH_MEASURE 0
 
 // API Server Configuration
 #ifndef API_SERVER

@@ -36,6 +36,7 @@
 
 #define SEC_IN_HOUR 3600 /*!<Seconds in an hour */
 #define SEC_IN_MIN 60    /*!<Seconds in a minute */
+#define MIN_IN_HOUR 60  /*!< Minutes in an hour */
 
 typedef struct __STATE_MACHINE__
 {
@@ -99,6 +100,20 @@ typedef struct __PMS5003_DATA__
   int32_t particleMicron10; // particles that are 10.0 microns or smaller in diameter
 } pms5003Data_t;
 
+typedef struct __MICS6814_SENSOR_READING__
+{
+  float carbonMonoxide;  // Carbon monoxide CO reading in PPM
+  float nitrogenDioxide; // Nitrogen dioxide NO2 reading in PPM
+  float ammonia;         // Ammonia NH3 reading in PPM
+} MICS6814SensorReading_t;
+
+typedef struct __MICS4514_SENSOR_READING__
+{
+  float carbonMonoxide;  // Carbon monoxide CO reading in PPM
+  float nitrogenDioxide; // Nitrogen dioxide NO2 reading in PPM
+  float ammonia;         // Ammonia NH3 reading in PPM
+} MICS4514SensorReading_t;
+
 typedef struct __MICS6814_RESISTANCE_VAL__
 {
   uint16_t redSensor;
@@ -125,29 +140,25 @@ typedef struct __MICS6814_DATA_
   float carbonMonoxide;  // Carbon monoxide CO 1 – 1000ppm
   float nitrogenDioxide; // Nitrogen dioxide NO2 0.05 – 10ppm
   float ammonia;         // Ammonia NH3 1 – 500ppm
-} MICS6814SensorReading_t;
+} pollutionReading;
 
-typedef struct __MICS6814_DATA__
+typedef struct __MICS_TUNING_DATA__
 {
   sensorR0Value_t sensingResInAir;           // sensingResistanceInAir
   sensorOffsetValue_t sensingResInAirOffset; // sensor offset values
-  sensorMolarMassValue_t molarMass;          // molar mass data
-  MICS6814SensorReading_t data;
-} MICS6814Data_t;
-
-typedef struct __MICS4514_DATA_
-{
-  float carbonMonoxide;  // Carbon monoxide CO - mapped from DFRobot CO reading
-  float nitrogenDioxide; // Nitrogen dioxide NO2 - mapped from DFRobot NO2 reading
-  float ammonia;         // Ammonia NH3 - mapped from DFRobot NH3 reading
-} MICS4514SensorReading_t;
+} MICS_Tuning_Data_t;
 
 typedef struct __MICS4514_DATA__
 {
-  MICS4514SensorReading_t data;
   uint8_t warmupComplete; // Track if sensor warmup is complete
   uint8_t powerState;     // Track current power state
 } MICS4514Data_t;
+
+typedef struct __MICS4514_ADC_ACCUMULATOR__
+{
+  uint32_t oxVoltageSum;   // Accumulated OX sensor ADC values
+  uint32_t redVoltageSum;  // Accumulated RED sensor ADC values
+} MICS4514AdcAccumulator_t;
 
 typedef struct __ZE25_O3_VAL__
 {
@@ -168,8 +179,11 @@ typedef struct __SENSOR_DATA__
   peripheralStatus_t status;
   bme680Data_t gasData;
   pms5003Data_t airQualityData;
-  MICS6814Data_t pollutionData;     // Used when gasSensorType == GAS_SENSOR_MICS6814
+  sensorMolarMassValue_t molarMass; // molar mass data
+  pollutionReading pollutionData;   // Where to place the data taken from the MICSxxxx sensors
+  MICS_Tuning_Data_t micsTuningData;// Used when gasSensorType == GAS_SENSOR_MICS6814
   MICS4514Data_t mics4514Data;      // Used when gasSensorType == GAS_SENSOR_MICS4514
+  MICS4514AdcAccumulator_t mics4514AdcAccumulator; // Accumulate raw ADC values for averaging
   ze25Data_t ozoneData;
   compensationsParams_t compParams; // Variables for compensation (MICS6814-OX and BME680-VOC)
   int8_t MSP;
@@ -179,9 +193,10 @@ typedef enum __SENSOR_STATUS_ARRAY__
 {
   SENS_STAT_BME680 = 0,   // BME680 sensor status
   SENS_STAT_PMS5003 = 1,  // PMS5003 sensor status
-  SENS_STAT_MICS6814 = 2, // MICS6814 sensor status
+  SENS_STAT_MICSxxxx = 2, // MICS6814 sensor status
   SENS_STAT_O3 = 3,       // Ozone sensor status
-  SENS_STAT_MAX = 4
+  // ---
+  SENS_STAT_MAX
 } sens_status_t;
 
 typedef struct __LOOP_VARIABLES_

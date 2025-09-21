@@ -375,19 +375,19 @@ void vHalDisplay_drawMICS6814PollutionSensorData(sensorData_t *p_tData,systemSta
   vHal_displayDrawScrHead(statPtr,devinfoPtr);
   if (p_tData->status.MICS6814Sensor)
   {
-    vGeneric_dspFloatToComma(p_tData->pollutionData.data.carbonMonoxide,sensorStringData,sizeof(sensorStringData));
+    vGeneric_dspFloatToComma(p_tData->pollutionData.carbonMonoxide,sensorStringData,sizeof(sensorStringData));
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
     u8g2.print("CO:  ");
     u8g2.print(sensorStringData);
     u8g2.print("ug/m3");
 
-    vGeneric_dspFloatToComma(p_tData->pollutionData.data.nitrogenDioxide,sensorStringData,sizeof(sensorStringData));
+    vGeneric_dspFloatToComma(p_tData->pollutionData.nitrogenDioxide,sensorStringData,sizeof(sensorStringData));
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
     u8g2.print("NOx:  ");
     u8g2.print(sensorStringData);
     u8g2.print("ug/m3");
 
-    vGeneric_dspFloatToComma(p_tData->pollutionData.data.ammonia,sensorStringData,sizeof(sensorStringData));
+    vGeneric_dspFloatToComma(p_tData->pollutionData.ammonia,sensorStringData,sizeof(sensorStringData));
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L3);
     u8g2.print("NH3:  ");
     u8g2.print(sensorStringData);

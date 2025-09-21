@@ -46,5 +46,38 @@ String vGeneric_floatToComma(float value);
  ***********************************************************/
 float vGeneric_convertPpmToUgM3(float ppm, float mm);
 
+/************************************************************
+ * @brief performs safe floating point comparison with epsilon tolerance
+ *
+ * @param a         first floating point value
+ * @param b         second floating point value
+ * @param epsilon   tolerance for comparison (default: 0.001f)
+ * @return true     if values are approximately equal within epsilon
+ * @return false    if values differ by more than epsilon
+ ***********************************************************/
+bool bGeneric_floatEqual(float a, float b, float epsilon = 0.001f);
+
+/************************************************************
+ * @brief performs safe floating point greater-than comparison with epsilon tolerance
+ *
+ * @param a         first floating point value
+ * @param b         second floating point value
+ * @param epsilon   tolerance for comparison (default: 0.001f)
+ * @return true     if a is greater than (b - epsilon)
+ * @return false    otherwise
+ ***********************************************************/
+bool bGeneric_floatGreaterThan(float a, float b, float epsilon = 0.001f);
+
+/************************************************************
+ * @brief performs safe floating point less-than comparison with epsilon tolerance
+ *
+ * @param a         first floating point value
+ * @param b         second floating point value
+ * @param epsilon   tolerance for comparison (default: 0.001f)
+ * @return true     if a is less than (b + epsilon)
+ * @return false    otherwise
+ ***********************************************************/
+bool bGeneric_floatLessThan(float a, float b, float epsilon = 0.001f);
+
 
 #endif

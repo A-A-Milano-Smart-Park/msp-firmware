@@ -97,7 +97,7 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
     log_d("GitHub API response: %s", payload.substring(0, 200).c_str());
 
     // Parse JSON response
-    DynamicJsonDocument doc(8192);
+    JsonDocument doc;
     DeserializationError error = deserializeJson(doc, payload);
 
     if (error)
@@ -1553,7 +1553,7 @@ void vHalFirmware_testGitHubAPI()
         log_d("Response length: %d bytes", payload.length());
 
         // Try to parse JSON
-        DynamicJsonDocument doc(8192);
+        JsonDocument doc;
         DeserializationError error = deserializeJson(doc, payload);
 
         if (!error)

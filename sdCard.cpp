@@ -60,7 +60,7 @@
 
 // Default configuration constants
 #define DEFAULT_NTP_SERVER "pool.ntp.org"
-#define DEFAULT_TIMEZONE "CET-1CEST"
+#define DEFAULT_TIMEZONE "GMT0"
 #define DEFAULT_WIFI_POWER "17dBm"
 #define UNINITIALIZED_MARKER 255
 
@@ -354,35 +354,35 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
   if (!config[JSON_KEY_MICS_CALIBRATION_VALUES].isNull())
   {
     JsonObject micsCalib = config[JSON_KEY_MICS_CALIBRATION_VALUES];
-    p_tData->pollutionData.sensingResInAir.redSensor = micsCalib[JSON_KEY_MICS_RED] | R0_RED_SENSOR;
-    p_tData->pollutionData.sensingResInAir.oxSensor = micsCalib[JSON_KEY_MICS_OX] | R0_OX_SENSOR;
-    p_tData->pollutionData.sensingResInAir.nh3Sensor = micsCalib[JSON_KEY_MICS_NH3] | R0_NH3_SENSOR;
+    p_tData->micsTuningData.sensingResInAir.redSensor = micsCalib[JSON_KEY_MICS_RED] | R0_RED_SENSOR;
+    p_tData->micsTuningData.sensingResInAir.oxSensor = micsCalib[JSON_KEY_MICS_OX] | R0_OX_SENSOR;
+    p_tData->micsTuningData.sensingResInAir.nh3Sensor = micsCalib[JSON_KEY_MICS_NH3] | R0_NH3_SENSOR;
   }
   else
   {
     log_e("Missing MICS_CALIBRATION_VALUES in config. Using defaults");
-    p_tData->pollutionData.sensingResInAir.redSensor = R0_RED_SENSOR;
-    p_tData->pollutionData.sensingResInAir.oxSensor = R0_OX_SENSOR;
-    p_tData->pollutionData.sensingResInAir.nh3Sensor = R0_NH3_SENSOR;
+    p_tData->micsTuningData.sensingResInAir.redSensor = R0_RED_SENSOR;
+    p_tData->micsTuningData.sensingResInAir.oxSensor = R0_OX_SENSOR;
+    p_tData->micsTuningData.sensingResInAir.nh3Sensor = R0_NH3_SENSOR;
   }
-  log_i("MICS R0[] = *%d*, *%d*, *%d*", p_tData->pollutionData.sensingResInAir.redSensor, p_tData->pollutionData.sensingResInAir.oxSensor, p_tData->pollutionData.sensingResInAir.nh3Sensor);
+  log_i("MICS R0[] = *%d*, *%d*, *%d*", p_tData->micsTuningData.sensingResInAir.redSensor, p_tData->micsTuningData.sensingResInAir.oxSensor, p_tData->micsTuningData.sensingResInAir.nh3Sensor);
 
   // Parse MICS Measurement Offsets
   if (!config[JSON_KEY_MICS_MEASUREMENTS_OFFSETS].isNull())
   {
     JsonObject micsOffset = config[JSON_KEY_MICS_MEASUREMENTS_OFFSETS];
-    p_tData->pollutionData.sensingResInAirOffset.redSensor = (int16_t)(micsOffset[JSON_KEY_MICS_RED] | DEFAULT_SENSOR_OFFSET);
-    p_tData->pollutionData.sensingResInAirOffset.oxSensor = (int16_t)(micsOffset[JSON_KEY_MICS_OX] | DEFAULT_SENSOR_OFFSET);
-    p_tData->pollutionData.sensingResInAirOffset.nh3Sensor = (int16_t)(micsOffset[JSON_KEY_MICS_NH3] | DEFAULT_SENSOR_OFFSET);
+    p_tData->micsTuningData.sensingResInAirOffset.redSensor = (int16_t)(micsOffset[JSON_KEY_MICS_RED] | DEFAULT_SENSOR_OFFSET);
+    p_tData->micsTuningData.sensingResInAirOffset.oxSensor = (int16_t)(micsOffset[JSON_KEY_MICS_OX] | DEFAULT_SENSOR_OFFSET);
+    p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor = (int16_t)(micsOffset[JSON_KEY_MICS_NH3] | DEFAULT_SENSOR_OFFSET);
   }
   else
   {
     log_e("Missing MICS_MEASUREMENTS_OFFSETS in config. Using defaults");
-    p_tData->pollutionData.sensingResInAirOffset.redSensor = DEFAULT_SENSOR_OFFSET;
-    p_tData->pollutionData.sensingResInAirOffset.oxSensor = DEFAULT_SENSOR_OFFSET;
-    p_tData->pollutionData.sensingResInAirOffset.nh3Sensor = DEFAULT_SENSOR_OFFSET;
+    p_tData->micsTuningData.sensingResInAirOffset.redSensor = DEFAULT_SENSOR_OFFSET;
+    p_tData->micsTuningData.sensingResInAirOffset.oxSensor = DEFAULT_SENSOR_OFFSET;
+    p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor = DEFAULT_SENSOR_OFFSET;
   }
-  log_i("MICSoffset[] = *%d*, *%d*, *%d*", p_tData->pollutionData.sensingResInAirOffset.redSensor, p_tData->pollutionData.sensingResInAirOffset.oxSensor, p_tData->pollutionData.sensingResInAirOffset.nh3Sensor);
+  log_i("MICSoffset[] = *%d*, *%d*, *%d*", p_tData->micsTuningData.sensingResInAirOffset.redSensor, p_tData->micsTuningData.sensingResInAirOffset.oxSensor, p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor);
 
   // Parse Compensation Factors
   if (!config[JSON_KEY_COMPENSATION_FACTORS].isNull())
@@ -402,7 +402,11 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
   log_i("compensation[] = *%.3f*, *%.3f*, *%.6f*", p_tData->compParams.currentHumidity, p_tData->compParams.currentTemperature, p_tData->compParams.currentPressure);
 
   // Parse Use Modem
+  #if (FORCE_GSM_NETWORK_CONNECTION == 1)
+  sysStat->use_modem = true;
+  #else
   sysStat->use_modem = config[JSON_KEY_USE_MODEM] | false;
+  #endif
   log_i("useModem = *%s*", (sysStat->use_modem) ? STR_TRUE : STR_FALSE);
 
   // Parse Modem APN
@@ -535,15 +539,15 @@ uint8_t checkConfig(const char *configpath, deviceNetworkInfo_t *p_tDev, sensorD
 
       // MICS calibration values
       JsonObject micsCalib = config[JSON_KEY_MICS_CALIBRATION_VALUES].to<JsonObject>();
-      micsCalib[JSON_KEY_MICS_RED] = p_tData->pollutionData.data.carbonMonoxide;
-      micsCalib[JSON_KEY_MICS_OX] = p_tData->pollutionData.data.nitrogenDioxide;
-      micsCalib[JSON_KEY_MICS_NH3] = p_tData->pollutionData.data.ammonia;
+      micsCalib[JSON_KEY_MICS_RED] = p_tData->pollutionData.carbonMonoxide;
+      micsCalib[JSON_KEY_MICS_OX] = p_tData->pollutionData.nitrogenDioxide;
+      micsCalib[JSON_KEY_MICS_NH3] = p_tData->pollutionData.ammonia;
 
       // MICS measurement offsets
       JsonObject micsOffset = config[JSON_KEY_MICS_MEASUREMENTS_OFFSETS].to<JsonObject>();
-      micsOffset[JSON_KEY_MICS_RED] = p_tData->pollutionData.sensingResInAirOffset.redSensor;
-      micsOffset[JSON_KEY_MICS_OX] = p_tData->pollutionData.sensingResInAirOffset.oxSensor;
-      micsOffset[JSON_KEY_MICS_NH3] = p_tData->pollutionData.sensingResInAirOffset.nh3Sensor;
+      micsOffset[JSON_KEY_MICS_RED] = p_tData->micsTuningData.sensingResInAirOffset.redSensor;
+      micsOffset[JSON_KEY_MICS_OX] = p_tData->micsTuningData.sensingResInAirOffset.oxSensor;
+      micsOffset[JSON_KEY_MICS_NH3] = p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor;
 
       // Compensation factors
       JsonObject compFactors = config[JSON_KEY_COMPENSATION_FACTORS].to<JsonObject>();

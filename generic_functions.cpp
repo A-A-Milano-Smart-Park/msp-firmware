@@ -64,3 +64,45 @@ float vGeneric_convertPpmToUgM3(float ppm, float mm)
   // Standard conversion: µg/m³ = ppm × (molecular_weight / molar_volume_at_STP) × conversion_factor
   return ppm * mm * PPM_TO_UGM3_FACTOR / MOLAR_VOLUME_STP;
 }
+
+/************************************************************
+ * @brief performs safe floating point comparison with epsilon tolerance
+ *
+ * @param a         first floating point value
+ * @param b         second floating point value
+ * @param epsilon   tolerance for comparison (default: 0.001f)
+ * @return true     if values are approximately equal within epsilon
+ * @return false    if values differ by more than epsilon
+ ***********************************************************/
+bool bGeneric_floatEqual(float a, float b, float epsilon)
+{
+  return fabs(a - b) <= epsilon;
+}
+
+/************************************************************
+ * @brief performs safe floating point greater-than comparison with epsilon tolerance
+ *
+ * @param a         first floating point value
+ * @param b         second floating point value
+ * @param epsilon   tolerance for comparison (default: 0.001f)
+ * @return true     if a is greater than (b - epsilon)
+ * @return false    otherwise
+ ***********************************************************/
+bool bGeneric_floatGreaterThan(float a, float b, float epsilon)
+{
+  return a >= (b - epsilon);
+}
+
+/************************************************************
+ * @brief performs safe floating point less-than comparison with epsilon tolerance
+ *
+ * @param a         first floating point value
+ * @param b         second floating point value
+ * @param epsilon   tolerance for comparison (default: 0.001f)
+ * @return true     if a is less than (b + epsilon)
+ * @return false    otherwise
+ ***********************************************************/
+bool bGeneric_floatLessThan(float a, float b, float epsilon)
+{
+  return a <= (b + epsilon);
+}

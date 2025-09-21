@@ -75,7 +75,7 @@ static PMS pms(pmsSerial);
 #define MICS4514_I2C_ADDR 0x75     // Default I2C address
 
 // -- MICS6814 sensors instances
-static MiCS6814 gas;              // MICS6814 sensor instance
+static MiCS6814 gas;                                        // MICS6814 sensor instance
 static DFRobot_MICS_I2C mics4514(&Wire, MICS4514_I2C_ADDR); // MICS4514 sensor instance
 
 // -- Create a new state machine instance
@@ -123,6 +123,8 @@ void vMsp_setGpioPins(void);
 
 void vMspInit_NetworkAndMeasInfo(void);
 void vMspInit_MeasInfo(void);
+
+void vMsp_scanI2CDevices(void);
 
 void Msp_getSystemStatus(systemStatus_t *stat);
 
@@ -172,6 +174,11 @@ void setup()
   // Initialize the serial port and I2C for the display
   vHalDisplay_initSerialAndI2c();
 
+#ifdef ENABLE_I2C_SCANNER
+  // Scan I2C bus for connected devices
+  vMsp_scanI2CDevices();
+#endif
+
   // Initialize the display task data queue
   vTaskDisplay_initDataQueue();
 
@@ -219,17 +226,24 @@ void setup()
   vHalSdcard_readSD(&sysStat, &devinfo, &sensorData_accumulate, &measStat, &sysData);
 
   // Phase 2: Check for downloaded firmware and apply update if newer
-  if (SD.exists("/firmware.bin")) {
+  if (SD.exists("/firmware.bin"))
+  {
     log_i("Downloaded firmware file found - checking for update");
-    if (bHalFirmware_checkAndApplyPendingUpdate("/firmware.bin")) {
+    if (bHalFirmware_checkAndApplyPendingUpdate("/firmware.bin"))
+    {
       log_i("Firmware update applied successfully");
-    } else {
+    }
+    else
+    {
       log_w("No firmware update needed or update failed - cleaning up file");
     }
     // Always remove firmware file after processing
-    if (SD.remove("/firmware.bin")) {
+    if (SD.remove("/firmware.bin"))
+    {
       log_i("Firmware file cleaned up successfully");
-    } else {
+    }
+    else
+    {
       log_w("Failed to remove firmware.bin file");
     }
   }
@@ -293,15 +307,13 @@ void setup()
   pmsSerial.begin(9600, SERIAL_8N1, PMSERIAL_RX, PMSERIAL_TX); // baud, type, ESP_RX, ESP_TX
   delay(1500);
   vMsp_updateDataAndSendEvent(DISP_EVENT_PMS5003_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-
-  pms.wakeUp(); // Waking up sensor after sleep
-  delay(1500);
+  delay(1000);
   if (pms.readUntil(data))
   {
     log_i("PMS5003 sensor detected, initializing...\n");
     sensorData_accumulate.status.PMS5003Sensor = true;
     vMsp_updateDataAndSendEvent(DISP_EVENT_PMS5003_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-    pms.sleep(); // Putting sensor to sleep
+    measStat.isPmsAwake = true;
   }
   else
   {
@@ -316,49 +328,49 @@ void setup()
   // Initialize gas sensor based on configuration type
   switch (sysStat.gasSensorType)
   {
-    case GAS_SENSOR_MICS6814:
-    {
-      if (gas.begin())
-      { // Connect to MICS6814 sensor using default I2C address (0x04)
-        log_i("MICS6814 sensor detected, initializing...\n");
-        sensorData_accumulate.status.MICS6814Sensor = true;
-        gas.powerOn(); // turn on heating element and led
-        gas.ledOn();
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+  case GAS_SENSOR_MICS6814:
+  {
+    if (gas.begin())
+    { // Connect to MICS6814 sensor using default I2C address (0x04)
+      log_i("MICS6814 sensor detected, initializing...\n");
+      sensorData_accumulate.status.MICS6814Sensor = true;
+      gas.powerOn(); // turn on heating element and led
+      gas.ledOn();
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
-        sensorR0Value_t r0Values;
-        r0Values.redSensor = gas.getBaseResistance(CH_RED);
-        r0Values.oxSensor = gas.getBaseResistance(CH_OX);
-        r0Values.nh3Sensor = gas.getBaseResistance(CH_NH3);
+      sensorR0Value_t r0Values;
+      r0Values.redSensor = gas.getBaseResistance(CH_RED);
+      r0Values.oxSensor = gas.getBaseResistance(CH_OX);
+      r0Values.nh3Sensor = gas.getBaseResistance(CH_NH3);
 
-        if (tHalSensor_checkMicsValues(&sensorData_accumulate, &r0Values) == STATUS_OK)
-        {
-          log_i("MICS6814 R0 values are already as default!\n");
-          vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-        }
-        else
-        {
-          log_i("Setting MICS6814 R0 values as default... ");
-          vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-
-          vHalSensor_writeMicsValues(&sensorData_accumulate);
-
-          vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-          log_i("Done!\n");
-        }
-        gas.setOffsets(&sensorData_accumulate.pollutionData.sensingResInAirOffset.redSensor);
+      if (tHalSensor_checkMicsValues(&sensorData_accumulate, &r0Values) == STATUS_OK)
+      {
+        log_i("MICS6814 R0 values are already as default!\n");
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       }
       else
       {
-        log_e("MICS6814 sensor not detected!\n");
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-      }
-      break;
-    }
+        log_i("Setting MICS6814 R0 values as default... ");
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
-    case GAS_SENSOR_MICS4514:
+        vHalSensor_writeMicsValues(&sensorData_accumulate);
+
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        log_i("Done!\n");
+      }
+      gas.setOffsets(&sensorData_accumulate.micsTuningData.sensingResInAirOffset.redSensor);
+    }
+    else
     {
-      log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...\n");
+      log_e("MICS6814 sensor not detected!\n");
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    }
+    break;
+  }
+
+  case GAS_SENSOR_MICS4514:
+  {
+    log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...\n");
 
     if (mics4514.begin())
     { // Connect to MICS4514 sensor using I2C
@@ -367,42 +379,50 @@ void setup()
 
       mics4514.wakeUpMode();
 
-        // Start sensor warmup process
-        log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
-        mics4514.warmUpTime(MICS4514_WARMUP_TIME_MIN);
-
-        // Initialize MICS4514 specific data
-        sensorData_accumulate.mics4514Data.warmupComplete = 0;
-        sensorData_accumulate.mics4514Data.powerState = 1;
-
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-        log_i("MICS4514 initialization complete!\n");
-      }
-      else
+      // Start sensor warmup process
+      log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
+      uint8_t loadingStep = 0;
+      float delayInMs = 5000.0;
+      while (mics4514.warmUpTime(MICS4514_WARMUP_TIME_MIN) == false)
       {
-        log_e("MICS4514 sensor not detected!\n");
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        // stay here, until the sensor get heaten up.
+        printf("MIXS4514 - Heat-Up: %3.1f %%\n", (float)((loadingStep * delayInMs) / ((MICS4514_WARMUP_TIME_MIN * 60.0f * 1000.0f)) * 100.0f));
+        vTaskDelay(pdMS_TO_TICKS((int32_t)delayInMs));
+        loadingStep++;
       }
-      break;
-    }
 
-    default:
-    {
-      log_e("Unknown gas sensor type: %d\n", sysStat.gasSensorType);
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-      break;
+      // Initialize MICS4514 specific data
+      sensorData_accumulate.mics4514Data.warmupComplete = 0;
+      sensorData_accumulate.mics4514Data.powerState = 1;
+
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      log_i("MICS4514 initialization complete!\n");
     }
+    else
+    {
+      log_e("MICS4514 sensor not detected!\n");
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    }
+    break;
+  }
+
+  default:
+  {
+    log_e("Unknown gas sensor type: %d\n", sysStat.gasSensorType);
+    vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    break;
+  }
   }
   //+++++++++++++++++++++++++++++++++++++++++++++++++++
 
   // O3 ++++++++++++++++++++++++++++++++++++++++++
-
   vMsp_updateDataAndSendEvent(DISP_EVENT_O3_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
   if (!tHalSensor_isAnalogO3Connected())
   {
     log_e("O3 sensor not detected!\n");
     vMsp_updateDataAndSendEvent(DISP_EVENT_O3_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    sensorData_accumulate.status.O3Sensor = false;
   }
   else
   {
@@ -411,15 +431,6 @@ void setup()
     vMsp_updateDataAndSendEvent(DISP_EVENT_O3_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
   }
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-  if (sensorData_accumulate.status.PMS5003Sensor)
-  {
-    measStat.additional_delay = PMS_PREHEAT_TIME_IN_SEC;
-  }
-  else
-  {
-    measStat.additional_delay = 0; /*!< No additional delay if PMS is not running */
-  }
 
   // Always use 1-minute intervals for measurements
   measStat.delay_between_measurements = SEC_IN_MIN;
@@ -539,7 +550,7 @@ void loop()
 
       // Check if daily NTP sync is needed (at 00:00:00)
       int current_day = timeinfo.tm_yday; // Day of year (0-365)
-      if ((timeinfo.tm_hour == 0 && timeinfo.tm_min == 0 && timeinfo.tm_sec == 0) &&
+      if (((timeinfo.tm_hour == 0) && (timeinfo.tm_min == 0) && (timeinfo.tm_sec == 0)) &&
           (current_day != sysData.ntp_last_sync_day))
       {
         log_i("Daily NTP sync needed - triggering time synchronization");
@@ -549,93 +560,15 @@ void loop()
         break;
       }
 
-      // Check for firmware updates at 00:00:00 if fwAutoUpgrade is enabled
-      // and if there is a valid internet connection
-      static int last_fw_check_day = -1;
-      if ((current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
-      {
-        log_i("Daily firmware update check triggered");
-
-        if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
-        {
-          last_fw_check_day = current_day;
-        }
-      }
-
       // Calculate if we are exactly at the start of a minute (00 seconds)
       // We trigger measurement only when seconds == 0, ensuring exact minute alignment
-      measStat.timeout_seconds = measStat.curr_seconds;
+      measStat.timeout_seconds = ((measStat.curr_total_seconds + measStat.additional_delay) % measStat.delay_between_measurements);
 
-      if (mainStateMachine.isFirstTransition == true)
+      // It is time for a measurement? If so continue, otherwise break.
+      if (measStat.timeout_seconds != 0)
       {
-        // Always set avg_measurements to max_measurements for consistent cycles
-        measStat.avg_measurements = measStat.max_measurements;
-
-        // Simple clock-aligned timing: always transmit at boundaries (00, 05, 10, etc.)
-        int position_in_cycle = measStat.curr_minutes % measStat.avg_measurements;
-
-        // Find the next transmission boundary
-        int next_transmission_minute;
-        if (position_in_cycle == 0)
-        {
-          // We're exactly at a boundary - next transmission is in avg_measurements minutes
-          next_transmission_minute = measStat.curr_minutes + measStat.avg_measurements;
-        }
-        else
-        {
-          // Find the next boundary
-          next_transmission_minute = measStat.curr_minutes + (measStat.avg_measurements - position_in_cycle);
-        }
-
-        if (next_transmission_minute >= 60)
-        {
-          next_transmission_minute -= 60;
-        }
-
-        // For proper alignment, we should start measurements when we can complete exactly
-        // avg_measurements before the transmission boundary
-        bool can_start_proper_cycle = true;
-
-        // If we're at position 0 (transmission boundary), wait for next minute to start
-        if (position_in_cycle == 0)
-        {
-          // log_i("[WAIT] At transmission boundary - waiting for next minute to start new cycle");
-          can_start_proper_cycle = false;
-        }
-        // Start measurements when we have exactly avg_measurements minutes to the boundary
-        // For avg_measurements=5: start at position 1 (e.g., minute 46 for boundary at 50)
-        else if (position_in_cycle == 1)
-        {
-          log_i("[OK] Perfect timing - starting %d-measurement cycle ending at %02d",
-                measStat.avg_measurements, next_transmission_minute);
-          can_start_proper_cycle = true;
-        }
-        // Otherwise, wait for the next proper cycle
-        else
-        {
-          // log_i("[WAIT] Position %d - waiting for proper cycle start after boundary %02d",
-          // position_in_cycle, next_transmission_minute);
-          can_start_proper_cycle = false;
-        }
-
-        if (can_start_proper_cycle)
-        {
-          mainStateMachine.isFirstTransition = false;
-        }
-        else
-        {
-          // Stay in wait state until proper timing
-          mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
-          break;
-        }
-      }
-
-      // kick the pms up when the timeout count starts
-      if ((measStat.isPmsAwake == false) && (sensorData_accumulate.status.PMS5003Sensor))
-      {
-        log_i("Starting PMS sensor");
-        measStat.isPmsAwake = true;
-        pms.wakeUp();
+        mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
+        break;
       }
 
       // It is time for a measurement - trigger at exactly 00 seconds of every minute
@@ -643,11 +576,6 @@ void loop()
       {
         log_i("Timeout expired!");
         log_i("Current time: %02d:%02d:%02d", timeinfo.tm_hour, measStat.curr_minutes, measStat.curr_seconds);
-        // Remove the pre-heating time only if the PMS is awake and working properly
-        if ((measStat.isPmsAwake == false) && (sensorData_accumulate.status.PMS5003Sensor))
-        {
-          measStat.additional_delay = 0;
-        }
 
         // Only set first transition flag when coming from states that require reset
         if ((mainStateMachine.prev_state == SYS_STATE_WAIT_FOR_NTP_SYNC) || (mainStateMachine.prev_state == SYS_STATE_SEND_DATA))
@@ -680,15 +608,6 @@ void loop()
 
   case SYS_STATE_READ_SENSORS:
   {
-    // Prevent over-collection: if we already have enough measurements, skip sensor reading
-    if (measStat.measurement_count >= measStat.avg_measurements)
-    {
-      log_i("Target measurements (%d) already reached, skipping sensor reading", measStat.avg_measurements);
-      mainStateMachine.next_state = SYS_STATE_EVAL_SENSOR_STATUS;
-      mainStateMachine.prev_state = SYS_STATE_READ_SENSORS;
-      break;
-    }
-
     log_i("Reading sensors...");
 
     // Reset accumulation variables when starting a new measurement cycle
@@ -704,10 +623,51 @@ void loop()
       sensorData_accumulate.airQualityData.particleMicron1 = 0.0f;
       sensorData_accumulate.airQualityData.particleMicron25 = 0.0f;
       sensorData_accumulate.airQualityData.particleMicron10 = 0.0f;
-      sensorData_accumulate.pollutionData.data.carbonMonoxide = 0.0f;
-      sensorData_accumulate.pollutionData.data.nitrogenDioxide = 0.0f;
-      sensorData_accumulate.pollutionData.data.ammonia = 0.0f;
+      sensorData_accumulate.pollutionData.carbonMonoxide = 0.0f;
+      sensorData_accumulate.pollutionData.nitrogenDioxide = 0.0f;
+      sensorData_accumulate.pollutionData.ammonia = 0.0f;
       sensorData_accumulate.ozoneData.ozone = 0.0f;
+
+      // Reset MICS4514 ADC accumulator for new measurement cycle
+      sensorData_accumulate.mics4514AdcAccumulator.oxVoltageSum = 0;
+      sensorData_accumulate.mics4514AdcAccumulator.redVoltageSum = 0;
+
+      // Calculate measurements needed to reach next transmission boundary
+      // For max_measurements=5: boundaries at 0,5,10,15,20,25,30,35,40,45,50,55
+      int minutes_to_next_boundary;
+      int next_boundary_minute;
+
+      // Calculate next boundary from current minute
+      next_boundary_minute = ((measStat.curr_minutes / measStat.max_measurements) + 1) * measStat.max_measurements;
+
+      // Handle hour wraparound (when next boundary >= 60)
+      if (next_boundary_minute >= 60)
+      {
+        next_boundary_minute = 0; // Wrap to minute 00 of next hour
+      }
+
+      // Calculate measurements needed
+      if (next_boundary_minute == 0)
+      {
+        // Special case: crossing hour boundary (e.g., 56->57->58->59->00)
+        minutes_to_next_boundary = (60 - measStat.curr_minutes) + 1;
+      }
+      else
+      {
+        // Normal case within the hour
+        minutes_to_next_boundary = next_boundary_minute - measStat.curr_minutes + 1;
+      }
+
+      measStat.avg_measurements = minutes_to_next_boundary;
+
+      log_i("BOUNDARY CALCULATION: curr_minute=%d, max_measurements=%d, cycle_needs=%d, next_boundary=%d",
+            measStat.curr_minutes, measStat.max_measurements, minutes_to_next_boundary, next_boundary_minute);
+
+      if (measStat.avg_measurements == 0)
+      {
+        measStat.avg_measurements = 1; // If the number of measurements is 0, set it to 1
+        // it means we are starting the measurement in the exact minute in which we want to send the data
+      }
 
       err.BMEfails = 0;
       err.PMSfails = 0;
@@ -717,6 +677,15 @@ void loop()
 
       // Note: measurement_count will be incremented after this sensor reading completes
       log_i("NEW MEASUREMENT CYCLE: Starting fresh with count %d (target: %d measurements)", measStat.measurement_count, measStat.avg_measurements);
+    }
+
+    // Prevent over-collection: if we already have enough measurements, skip sensor reading
+    if (measStat.measurement_count >= measStat.avg_measurements)
+    {
+      log_i("Target measurements (%d) already reached, skipping sensor reading", measStat.avg_measurements);
+      mainStateMachine.next_state = SYS_STATE_EVAL_SENSOR_STATUS;
+      mainStateMachine.prev_state = SYS_STATE_READ_SENSORS;
+      break;
     }
 
     log_i("=== READING SENSOR #%d (target: %d measurements) ===", measStat.measurement_count + 1, measStat.avg_measurements);
@@ -750,7 +719,7 @@ void loop()
         if (retry == 0)
         {
           // Give BME680 time to prepare measurement (especially gas sensor)
-          delay(200);
+          delay(500);
         }
 
         if (!bme680.run())
@@ -804,127 +773,147 @@ void loop()
     //------------------------------------------------------------------------------------------------------------------------
     //------------------------------------------------------------------------------------------------------------------------
 
-    // READING MICS6814
     // Gas sensor reading (MICS6814 or MICS4514)
-    if (sensorData_accumulate.status.MICS6814Sensor)
+    switch (sysStat.gasSensorType)
     {
-      log_i("Sampling MICS6814 sensor...");
-      err.count = 0;
-      // Attempt to read MICS6814 sensor with maximum retries
-      bool mics_read_success = false;
-      for (int retry = 0; retry < MAX_SENSOR_RETRIES; retry++)
+    case GAS_SENSOR_MICS6814:
+    {
+      if (sensorData_accumulate.status.MICS6814Sensor)
       {
-        MICS6814SensorReading_t micsLocData;
-
-        micsLocData.carbonMonoxide = gas.measureCO();
-        micsLocData.nitrogenDioxide = gas.measureNO2();
-        micsLocData.ammonia = gas.measureNH3();
-
-        if ((micsLocData.carbonMonoxide < 0) || (micsLocData.nitrogenDioxide < 0) || (micsLocData.ammonia < 0))
+        log_i("Sampling MICS6814 sensor...");
+        err.count = 0;
+        // Attempt to read MICS6814 sensor with maximum retries
+        bool mics_read_success = false;
+        for (int retry = 0; retry < MAX_SENSOR_RETRIES; retry++)
         {
-          err.count++;
-          log_w("MICS6814 sensor reading failed, attempt %d/%d", retry + 1, MAX_SENSOR_RETRIES);
-          if (retry == (MAX_SENSOR_RETRIES - 1)) // Last attempt failed
+          MICS6814SensorReading_t micsLocData;
+
+          micsLocData.carbonMonoxide = gas.measureCO();
+          micsLocData.nitrogenDioxide = gas.measureNO2();
+          micsLocData.ammonia = gas.measureNH3();
+
+          if ((micsLocData.carbonMonoxide < 0) || (micsLocData.nitrogenDioxide < 0) || (micsLocData.ammonia < 0))
           {
-            log_e("Error while sampling MICS6814 sensor after %d attempts!", MAX_SENSOR_RETRIES);
-            err.MICSfails++;
-            break;
+            err.count++;
+            log_w("MICS6814 sensor reading failed, attempt %d/%d", retry + 1, MAX_SENSOR_RETRIES);
+            if (retry == (MAX_SENSOR_RETRIES - 1)) // Last attempt failed
+            {
+              log_e("Error while sampling MICS6814 sensor after %d attempts!", MAX_SENSOR_RETRIES);
+              err.MICSfails++;
+              break;
+            }
+            delay(1000);
+            continue;
           }
-          delay(1000);
-          continue;
+
+          // Successfully read sensor data
+          mics_read_success = true;
+          micsLocData.carbonMonoxide = vGeneric_convertPpmToUgM3(micsLocData.carbonMonoxide, sensorData_accumulate.molarMass.carbonMonoxide);
+          log_v("CO(ug/m3): %.3f", micsLocData.carbonMonoxide);
+          sensorData_accumulate.pollutionData.carbonMonoxide += micsLocData.carbonMonoxide;
+          sensorData_single.pollutionData.carbonMonoxide = micsLocData.carbonMonoxide;
+
+          micsLocData.nitrogenDioxide = vGeneric_convertPpmToUgM3(micsLocData.nitrogenDioxide, sensorData_accumulate.molarMass.nitrogenDioxide);
+          if (sensorData_accumulate.status.BME680Sensor)
+          {
+            micsLocData.nitrogenDioxide = fHalSensor_no2AndVocCompensation(micsLocData.nitrogenDioxide, &localData, &sensorData_accumulate);
+          }
+          log_v("NOx(ug/m3): %.3f", micsLocData.nitrogenDioxide);
+          sensorData_accumulate.pollutionData.nitrogenDioxide += micsLocData.nitrogenDioxide;
+          sensorData_single.pollutionData.nitrogenDioxide = micsLocData.nitrogenDioxide;
+
+          micsLocData.ammonia = vGeneric_convertPpmToUgM3(micsLocData.ammonia, sensorData_accumulate.molarMass.ammonia);
+          log_v("NH3(ug/m3): %.3f\n", micsLocData.ammonia);
+          sensorData_accumulate.pollutionData.ammonia += micsLocData.ammonia;
+          sensorData_single.pollutionData.ammonia = micsLocData.ammonia;
+
+          break;
         }
 
-        // Successfully read sensor data
-        mics_read_success = true;
-        micsLocData.carbonMonoxide = vGeneric_convertPpmToUgM3(micsLocData.carbonMonoxide, sensorData_accumulate.pollutionData.molarMass.carbonMonoxide);
-        log_v("CO(ug/m3): %.3f", micsLocData.carbonMonoxide);
-        sensorData_accumulate.pollutionData.data.carbonMonoxide += micsLocData.carbonMonoxide;
-        sensorData_single.pollutionData.data.carbonMonoxide = micsLocData.carbonMonoxide;
-
-        micsLocData.nitrogenDioxide = vGeneric_convertPpmToUgM3(micsLocData.nitrogenDioxide, sensorData_accumulate.pollutionData.molarMass.nitrogenDioxide);
-        if (sensorData_accumulate.status.BME680Sensor)
+        if (mics_read_success)
         {
-          micsLocData.nitrogenDioxide = fHalSensor_no2AndVocCompensation(micsLocData.nitrogenDioxide, &localData, &sensorData_accumulate);
+          log_i("MICS6814 measurement #%d completed successfully", measStat.measurement_count + 1);
         }
-        log_v("NOx(ug/m3): %.3f", micsLocData.nitrogenDioxide);
-        sensorData_accumulate.pollutionData.data.nitrogenDioxide += micsLocData.nitrogenDioxide;
-        sensorData_single.pollutionData.data.nitrogenDioxide = micsLocData.nitrogenDioxide;
-
-        micsLocData.ammonia = vGeneric_convertPpmToUgM3(micsLocData.ammonia, sensorData_accumulate.pollutionData.molarMass.ammonia);
-        log_v("NH3(ug/m3): %.3f\n", micsLocData.ammonia);
-        sensorData_accumulate.pollutionData.data.ammonia += micsLocData.ammonia;
-        sensorData_single.pollutionData.data.ammonia = micsLocData.ammonia;
-
-        break;
       }
-
-      if (mics_read_success)
+      break;
+    }
+    case GAS_SENSOR_MICS4514:
+    {
+      if (sensorData_accumulate.status.MICS4514Sensor)
       {
-        log_i("MICS6814 measurement #%d completed successfully", measStat.measurement_count + 1);
+        log_i("Sampling MICS4514 sensor...");
+        err.count = 0;
+        // Attempt to read MICS4514 sensor with maximum retries
+        bool mics_read_success = false;
+        for (int retry = 0; retry < MAX_SENSOR_RETRIES; retry++)
+        {
+          MICS4514SensorReading_t micsLocData;
+
+          // Read raw ADC values and accumulate for averaging
+          if (tHalSensor_readMICS4514_ADC(mics4514, &sensorData_accumulate) != STATUS_OK)
+          {
+            err.count++;
+            log_w("MICS4514 ADC reading failed, attempt %d/%d", retry + 1, MAX_SENSOR_RETRIES);
+            if (retry == (MAX_SENSOR_RETRIES - 1)) // Last attempt failed
+            {
+              log_e("Error while reading MICS4514 ADC after %d attempts!", MAX_SENSOR_RETRIES);
+              err.MICSfails++;
+              break;
+            }
+            delay(1000);
+            continue;
+          }
+
+          // Also calculate immediate gas concentrations for real-time display (sensorData_single)
+          // This provides instant feedback for LCD while accumulating for accurate averaging
+          if (tHalSensor_calculateMICS4514_Immediate(mics4514, &sensorData_accumulate, &micsLocData) == STATUS_OK)
+          {
+            // Convert PPM to µg/m³ for immediate display values (same as old approach)
+            micsLocData.carbonMonoxide = vGeneric_convertPpmToUgM3(micsLocData.carbonMonoxide, sensorData_accumulate.molarMass.carbonMonoxide);
+            log_v("CO(ug/m3): %.3f", micsLocData.carbonMonoxide);
+            sensorData_single.pollutionData.carbonMonoxide = micsLocData.carbonMonoxide;
+
+            // Convert NO2 from PPM to µg/m³ (with optional BME680 compensation)
+            micsLocData.nitrogenDioxide = vGeneric_convertPpmToUgM3(micsLocData.nitrogenDioxide, sensorData_accumulate.molarMass.nitrogenDioxide);
+            if (sensorData_accumulate.status.BME680Sensor)
+            {
+              micsLocData.nitrogenDioxide = fHalSensor_no2AndVocCompensation(micsLocData.nitrogenDioxide, &localData, &sensorData_accumulate);
+            }
+            log_v("NOx(ug/m3): %.3f", micsLocData.nitrogenDioxide);
+            sensorData_single.pollutionData.nitrogenDioxide = micsLocData.nitrogenDioxide;
+
+            // Convert NH3 from PPM to µg/m³
+            micsLocData.ammonia = vGeneric_convertPpmToUgM3(micsLocData.ammonia, sensorData_accumulate.molarMass.ammonia);
+            log_v("NH3(ug/m3): %.3f", micsLocData.ammonia);
+            sensorData_single.pollutionData.ammonia = micsLocData.ammonia;
+
+            log_i("MICS4514 immediate values for display: CO=%.2f, NO2=%.2f, NH3=%.2f µg/m³",
+                  micsLocData.carbonMonoxide, micsLocData.nitrogenDioxide, micsLocData.ammonia);
+          }
+          else
+          {
+            log_w("MICS4514 immediate gas calculation failed, keeping previous display values");
+          }
+
+          // Successfully read and accumulated ADC data
+          mics_read_success = true;
+          log_i("MICS4514 measurement #%d: ADC accumulated and display updated", measStat.measurement_count + 1);
+
+          break;
+        }
+
+        if (mics_read_success)
+        {
+          log_i("MICS4514 measurement #%d completed successfully", measStat.measurement_count + 1);
+        }
+        break;
       }
     }
-    else if (sensorData_accumulate.status.MICS4514Sensor)
+    default:
     {
-      log_i("Sampling MICS4514 sensor...");
-      err.count = 0;
-      // Attempt to read MICS4514 sensor with maximum retries
-      bool mics_read_success = false;
-      for (int retry = 0; retry < MAX_SENSOR_RETRIES; retry++)
-      {
-        MICS4514SensorReading_t micsLocData;
-
-        // Read gas concentrations from MICS4514 using DFRobot library
-        // Note: DFRobot library returns values in PPM
-        micsLocData.carbonMonoxide = mics4514.getGasData(CO);        // Get CO in PPM
-        micsLocData.nitrogenDioxide = mics4514.getGasData(NO2);      // Get NO2 in PPM
-        micsLocData.ammonia = mics4514.getGasData(NH3);              // Get NH3 in PPM
-
-        if ((micsLocData.carbonMonoxide < 0) || (micsLocData.nitrogenDioxide < 0) || (micsLocData.ammonia < 0))
-        {
-          err.count++;
-          log_w("MICS4514 sensor reading failed, attempt %d/%d", retry + 1, MAX_SENSOR_RETRIES);
-          if (retry == (MAX_SENSOR_RETRIES - 1)) // Last attempt failed
-          {
-            log_e("Error while sampling MICS4514 sensor after %d attempts!", MAX_SENSOR_RETRIES);
-            err.MICSfails++;
-            break;
-          }
-          delay(1000);
-          continue;
-        }
-
-        // Successfully read sensor data - convert PPM to ug/m3
-        mics_read_success = true;
-
-        // Convert CO from PPM to ug/m3 (using same molar mass as MICS6814)
-        micsLocData.carbonMonoxide = vGeneric_convertPpmToUgM3(micsLocData.carbonMonoxide, sensorData_accumulate.pollutionData.molarMass.carbonMonoxide);
-        log_v("CO(ug/m3): %.3f", micsLocData.carbonMonoxide);
-        sensorData_accumulate.mics4514Data.data.carbonMonoxide += micsLocData.carbonMonoxide;
-        sensorData_single.mics4514Data.data.carbonMonoxide = micsLocData.carbonMonoxide;
-
-        // Convert NO2 from PPM to ug/m3 (with optional BME680 compensation)
-        micsLocData.nitrogenDioxide = vGeneric_convertPpmToUgM3(micsLocData.nitrogenDioxide, sensorData_accumulate.pollutionData.molarMass.nitrogenDioxide);
-        if (sensorData_accumulate.status.BME680Sensor)
-        {
-          micsLocData.nitrogenDioxide = fHalSensor_no2AndVocCompensation(micsLocData.nitrogenDioxide, &localData, &sensorData_accumulate);
-        }
-        log_v("NOx(ug/m3): %.3f", micsLocData.nitrogenDioxide);
-        sensorData_accumulate.mics4514Data.data.nitrogenDioxide += micsLocData.nitrogenDioxide;
-        sensorData_single.mics4514Data.data.nitrogenDioxide = micsLocData.nitrogenDioxide;
-
-        // Convert NH3 from PPM to ug/m3
-        micsLocData.ammonia = vGeneric_convertPpmToUgM3(micsLocData.ammonia, sensorData_accumulate.pollutionData.molarMass.ammonia);
-        log_v("NH3(ug/m3): %.3f\n", micsLocData.ammonia);
-        sensorData_accumulate.mics4514Data.data.ammonia += micsLocData.ammonia;
-        sensorData_single.mics4514Data.data.ammonia = micsLocData.ammonia;
-
-        break;
-      }
-
-      if (mics_read_success)
-      {
-        log_i("MICS4514 measurement #%d completed successfully", measStat.measurement_count + 1);
-      }
+      log_w("WRONG GAS SENSOR SELECTED - OR NO GAS SENSOR");
+      break;
+    }
     }
 
     // READING O3
@@ -965,6 +954,11 @@ void loop()
       {
         log_i("O3 measurement #%d completed successfully", measStat.measurement_count + 1);
       }
+    }
+    else
+    {
+      sensorData_accumulate.ozoneData.ozone = 0.0f;
+      sensorData_single.ozoneData.ozone = 0.0f;
     }
 
     // READING PMS5003
@@ -1033,7 +1027,7 @@ void loop()
     log_i("temp: %.2f, hum: %.2f, pre: %.2f, VOC: %.2f, PM1: %d, PM25: %d, PM10: %d, MICS_CO: %.2f, MICS_NO2: %.2f, MICS_NH3: %.2f, ozone: %.2f, MSP: %d, measurement_count: %d\n",
           sensorData_accumulate.gasData.temperature, sensorData_accumulate.gasData.humidity, sensorData_accumulate.gasData.pressure, sensorData_accumulate.gasData.volatileOrganicCompounds,
           sensorData_accumulate.airQualityData.particleMicron1, sensorData_accumulate.airQualityData.particleMicron25, sensorData_accumulate.airQualityData.particleMicron10,
-          sensorData_accumulate.pollutionData.data.carbonMonoxide, sensorData_accumulate.pollutionData.data.nitrogenDioxide, sensorData_accumulate.pollutionData.data.ammonia,
+          sensorData_accumulate.pollutionData.carbonMonoxide, sensorData_accumulate.pollutionData.nitrogenDioxide, sensorData_accumulate.pollutionData.ammonia,
           sensorData_accumulate.ozoneData.ozone, sensorData_accumulate.MSP, measStat.measurement_count);
     log_i("Measurements done, going to timeout...\n");
 
@@ -1068,7 +1062,7 @@ void loop()
           sensorData_accumulate.status.PMS5003Sensor = true;
           sensorData_single.status.PMS5003Sensor = true;
           break;
-        case SENS_STAT_MICS6814:
+        case SENS_STAT_MICSxxxx:
           sensorData_accumulate.status.MICS6814Sensor = true;
           sensorData_single.status.MICS6814Sensor = true;
           break;
@@ -1083,7 +1077,7 @@ void loop()
     // Check if it's time to send data
     // We transmit when: 1) we have collected avg_measurements AND 2) we're at a transmission boundary AND 3) haven't transmitted at this boundary yet
     bool have_enough_measurements = (measStat.measurement_count >= measStat.avg_measurements);
-    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.avg_measurements) == 0); // Transmit at intervals
+    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.avg_measurements) == 0);   // Transmit at intervals
     bool boundary_not_transmitted = (measStat.last_transmission_minute != measStat.curr_minutes); // Prevent duplicate transmissions at same boundary
 
     log_i("TRANSMISSION CHECK: collected %d/%d measurements, boundary=%s (minute %d, interval=%d), last_tx_minute=%d",
@@ -1098,7 +1092,7 @@ void loop()
     else if (!boundary_not_transmitted)
     {
       log_i("Data already transmitted at this boundary (minute %d), waiting for next boundary", measStat.curr_minutes);
-      // Stay in current state, wait for next boundary
+      mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
     }
     else
     {
@@ -1126,7 +1120,7 @@ void loop()
           sensorData_accumulate.gasData.temperature, sensorData_accumulate.gasData.humidity, sensorData_accumulate.gasData.pressure,
           sensorData_accumulate.gasData.volatileOrganicCompounds,
           sensorData_accumulate.airQualityData.particleMicron1, sensorData_accumulate.airQualityData.particleMicron25, sensorData_accumulate.airQualityData.particleMicron10,
-          sensorData_accumulate.pollutionData.data.carbonMonoxide, sensorData_accumulate.pollutionData.data.nitrogenDioxide, sensorData_accumulate.pollutionData.data.ammonia,
+          sensorData_accumulate.pollutionData.carbonMonoxide, sensorData_accumulate.pollutionData.nitrogenDioxide, sensorData_accumulate.pollutionData.ammonia,
           sensorData_accumulate.ozoneData.ozone, sensorData_accumulate.MSP, measStat.measurement_count, measStat.avg_measurements);
 
     vMsp_updateDataAndSendEvent(DISP_EVENT_SENDING_MEAS, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
@@ -1140,15 +1134,28 @@ void loop()
       log_i("BEFORE AVERAGING: temp=%.2f, PM2.5=%d, CO=%.2f",
             sensorData_accumulate.gasData.temperature,
             sensorData_accumulate.airQualityData.particleMicron25,
-            sensorData_accumulate.pollutionData.data.carbonMonoxide);
+            sensorData_accumulate.pollutionData.carbonMonoxide);
 
       vHalSensor_performAverages(&err, &sensorData_accumulate, &measStat);
+
+      // Update sensorData_single with final averaged values for LCD display
+      if (sensorData_accumulate.status.MICS4514Sensor)
+      {
+        log_i("Updating sensorData_single with final averaged MICS4514 values");
+        sensorData_single.pollutionData.carbonMonoxide = sensorData_accumulate.pollutionData.carbonMonoxide;
+        sensorData_single.pollutionData.nitrogenDioxide = sensorData_accumulate.pollutionData.nitrogenDioxide;
+        sensorData_single.pollutionData.ammonia = sensorData_accumulate.pollutionData.ammonia;
+        log_i("sensorData_single updated: CO=%.2f, NO2=%.2f, NH3=%.2f µg/m³",
+              sensorData_single.pollutionData.carbonMonoxide,
+              sensorData_single.pollutionData.nitrogenDioxide,
+              sensorData_single.pollutionData.ammonia);
+      }
 
       // Log values after averaging for debugging
       log_i("AFTER AVERAGING: temp=%.2f, PM2.5=%d, CO=%.2f",
             sensorData_accumulate.gasData.temperature,
             sensorData_accumulate.airQualityData.particleMicron25,
-            sensorData_accumulate.pollutionData.data.carbonMonoxide);
+            sensorData_accumulate.pollutionData.carbonMonoxide);
     }
 
     // MSP# Index evaluation
@@ -1174,15 +1181,15 @@ void loop()
     switch (sysStat.gasSensorType)
     {
     case GAS_SENSOR_MICS6814:
-      sendData.MICS_CO = sensorData_accumulate.pollutionData.data.carbonMonoxide;
-      sendData.MICS_NO2 = sensorData_accumulate.pollutionData.data.nitrogenDioxide;
-      sendData.MICS_NH3 = sensorData_accumulate.pollutionData.data.ammonia;
+      sendData.MICS_CO = sensorData_accumulate.pollutionData.carbonMonoxide;
+      sendData.MICS_NO2 = sensorData_accumulate.pollutionData.nitrogenDioxide;
+      sendData.MICS_NH3 = sensorData_accumulate.pollutionData.ammonia;
       break;
 
     case GAS_SENSOR_MICS4514:
-      sendData.MICS_CO = sensorData_accumulate.mics4514Data.data.carbonMonoxide;
-      sendData.MICS_NO2 = sensorData_accumulate.mics4514Data.data.nitrogenDioxide;
-      sendData.MICS_NH3 = sensorData_accumulate.mics4514Data.data.ammonia;
+      sendData.MICS_CO = sensorData_accumulate.pollutionData.carbonMonoxide;
+      sendData.MICS_NO2 = sensorData_accumulate.pollutionData.nitrogenDioxide;
+      sendData.MICS_NH3 = sensorData_accumulate.pollutionData.ammonia;
       break;
 
     default:
@@ -1200,7 +1207,7 @@ void loop()
           sensorData_accumulate.gasData.temperature, sensorData_accumulate.gasData.humidity, sensorData_accumulate.gasData.pressure,
           sensorData_accumulate.gasData.volatileOrganicCompounds,
           sensorData_accumulate.airQualityData.particleMicron1, sensorData_accumulate.airQualityData.particleMicron25, sensorData_accumulate.airQualityData.particleMicron10,
-          sensorData_accumulate.pollutionData.data.carbonMonoxide, sensorData_accumulate.pollutionData.data.nitrogenDioxide, sensorData_accumulate.pollutionData.data.ammonia,
+          sensorData_accumulate.pollutionData.carbonMonoxide, sensorData_accumulate.pollutionData.nitrogenDioxide, sensorData_accumulate.pollutionData.ammonia,
           sensorData_accumulate.ozoneData.ozone, sensorData_accumulate.MSP, measStat.measurement_count);
 
     log_i("Send Time: %02d:%02d:%02d\n", sendData.sendTimeInfo.tm_hour, sendData.sendTimeInfo.tm_min, sendData.sendTimeInfo.tm_sec);
@@ -1209,7 +1216,7 @@ void loop()
     if (enqueueSendData(sendData, pdMS_TO_TICKS(500)))
     {
       log_i("Data enqueued successfully for network transmission");
-      measStat.data_transmitted = true; // Mark data as transmitted for this cycle
+      measStat.data_transmitted = true;                          // Mark data as transmitted for this cycle
       measStat.last_transmission_minute = measStat.curr_minutes; // Record the transmission boundary minute
       log_i("Recorded transmission at minute %d to prevent duplicates", measStat.last_transmission_minute);
     }
@@ -1226,7 +1233,7 @@ void loop()
           sensorData_accumulate.gasData.temperature, sensorData_accumulate.gasData.humidity, sensorData_accumulate.gasData.pressure,
           sensorData_accumulate.gasData.volatileOrganicCompounds,
           sensorData_accumulate.airQualityData.particleMicron1, sensorData_accumulate.airQualityData.particleMicron25, sensorData_accumulate.airQualityData.particleMicron10,
-          sensorData_accumulate.pollutionData.data.carbonMonoxide, sensorData_accumulate.pollutionData.data.nitrogenDioxide, sensorData_accumulate.pollutionData.data.ammonia,
+          sensorData_accumulate.pollutionData.carbonMonoxide, sensorData_accumulate.pollutionData.nitrogenDioxide, sensorData_accumulate.pollutionData.ammonia,
           sensorData_accumulate.ozoneData.ozone, sensorData_accumulate.MSP, measStat.measurement_count, measStat.avg_measurements);
 
     mainStateMachine.isFirstTransition = true; // set first transition flag
@@ -1248,10 +1255,14 @@ void loop()
     sensorData_accumulate.airQualityData.particleMicron1 = 0.0f;
     sensorData_accumulate.airQualityData.particleMicron25 = 0.0f;
     sensorData_accumulate.airQualityData.particleMicron10 = 0.0f;
-    sensorData_accumulate.pollutionData.data.carbonMonoxide = 0.0f;
-    sensorData_accumulate.pollutionData.data.nitrogenDioxide = 0.0f;
-    sensorData_accumulate.pollutionData.data.ammonia = 0.0f;
+    sensorData_accumulate.pollutionData.carbonMonoxide = 0.0f;
+    sensorData_accumulate.pollutionData.nitrogenDioxide = 0.0f;
+    sensorData_accumulate.pollutionData.ammonia = 0.0f;
     sensorData_accumulate.ozoneData.ozone = 0.0f;
+
+    // Reset MICS4514 ADC accumulator
+    sensorData_accumulate.mics4514AdcAccumulator.oxVoltageSum = 0;
+    sensorData_accumulate.mics4514AdcAccumulator.redVoltageSum = 0;
 
     // Reset single measurement data
     sensorData_single.gasData.temperature = 0.0f;
@@ -1261,10 +1272,30 @@ void loop()
     sensorData_single.airQualityData.particleMicron1 = 0.0f;
     sensorData_single.airQualityData.particleMicron25 = 0.0f;
     sensorData_single.airQualityData.particleMicron10 = 0.0f;
-    sensorData_single.pollutionData.data.carbonMonoxide = 0.0f;
-    sensorData_single.pollutionData.data.nitrogenDioxide = 0.0f;
-    sensorData_single.pollutionData.data.ammonia = 0.0f;
+    sensorData_single.pollutionData.carbonMonoxide = 0.0f;
+    sensorData_single.pollutionData.nitrogenDioxide = 0.0f;
+    sensorData_single.pollutionData.ammonia = 0.0f;
     sensorData_single.ozoneData.ozone = 0.0f;
+
+    // Check for firmware updates after midnight data transmission
+    if (getLocalTime(&timeinfo))
+    {
+      int current_day = timeinfo.tm_yday; // Day of year (0-365)
+      static int last_fw_check_day = -1;
+
+      // Check if this is midnight transmission (00:00) and we haven't checked today
+      if ((timeinfo.tm_hour == 0) && (timeinfo.tm_min == 0) &&
+          (current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
+      {
+        log_i("Midnight data transmission completed - triggering daily firmware update check");
+
+        if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
+        {
+          last_fw_check_day = current_day;
+          log_i("Firmware update check completed for day %d", current_day);
+        }
+      }
+    }
 
     // After transmission, system is now aligned - next cycles will be full measurements
     log_i("Data sent successfully. System now aligned - next cycles will collect %d measurements", measStat.max_measurements);
@@ -1323,24 +1354,24 @@ void vMspInit_sensorStatusAndData(sensorData_t *p_tData)
   p_tData->airQualityData.particleMicron10 = 0;
 
   // -- default R0 values for the sensor (RED, OX, NH3)
-  p_tData->pollutionData.sensingResInAir.redSensor = R0_RED_SENSOR;
-  p_tData->pollutionData.sensingResInAir.oxSensor = R0_OX_SENSOR;
-  p_tData->pollutionData.sensingResInAir.nh3Sensor = R0_NH3_SENSOR;
+  p_tData->micsTuningData.sensingResInAir.redSensor = R0_RED_SENSOR;
+  p_tData->micsTuningData.sensingResInAir.oxSensor = R0_OX_SENSOR;
+  p_tData->micsTuningData.sensingResInAir.nh3Sensor = R0_NH3_SENSOR;
 
   // -- default point offset values for sensor measurements (RED, OX, NH3)
-  p_tData->pollutionData.sensingResInAirOffset.redSensor = 0;
-  p_tData->pollutionData.sensingResInAirOffset.oxSensor = 0;
-  p_tData->pollutionData.sensingResInAirOffset.nh3Sensor = 0;
+  p_tData->micsTuningData.sensingResInAirOffset.redSensor = 0;
+  p_tData->micsTuningData.sensingResInAirOffset.oxSensor = 0;
+  p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor = 0;
 
   // -- molar mass of (CO, NO2, NH3)
-  p_tData->pollutionData.molarMass.carbonMonoxide = CO_MOLAR_MASS;
-  p_tData->pollutionData.molarMass.nitrogenDioxide = NO2_MOLAR_MASS;
-  p_tData->pollutionData.molarMass.ammonia = NH3_MOLAR_MASS;
+  p_tData->molarMass.carbonMonoxide = CO_MOLAR_MASS;
+  p_tData->molarMass.nitrogenDioxide = NO2_MOLAR_MASS;
+  p_tData->molarMass.ammonia = NH3_MOLAR_MASS;
 
   // -- MICS6814 sensor data
-  p_tData->pollutionData.data.carbonMonoxide = 0;
-  p_tData->pollutionData.data.nitrogenDioxide = 0;
-  p_tData->pollutionData.data.ammonia = 0;
+  p_tData->pollutionData.carbonMonoxide = 0;
+  p_tData->pollutionData.nitrogenDioxide = 0;
+  p_tData->pollutionData.ammonia = 0;
 
   // -- ozone detection module data
   p_tData->ozoneData.ozone = 0;
@@ -1387,8 +1418,12 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
 {
   log_i("Configuring system from SD data or defaults...");
 
+  // Measurement configuration - ensure it's a valid submultiple of 60
+  int valid_intervals[] = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60};
+  bool is_valid = false;
+
   // Apply configuration defaults if SD card data is missing or invalid
-  if (!sysStat->configuration || !sysStat->sdCard)
+  if ((!sysStat->configuration) || (!sysStat->sdCard))
   {
     log_w("SD configuration unavailable, applying defaults");
 
@@ -1434,11 +1469,7 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
 #endif
     }
 
-    // Measurement configuration - ensure it's a valid submultiple of 60
-    int valid_intervals[] = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60};
-    bool is_valid = false;
-    
-    for (int i = 0; i < sizeof(valid_intervals)/sizeof(valid_intervals[0]); i++)
+    for (int i = 0; i < sizeof(valid_intervals) / sizeof(valid_intervals[0]); i++)
     {
       if (measStat->avg_measurements == valid_intervals[i])
       {
@@ -1446,7 +1477,7 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
         break;
       }
     }
-    
+
     if (!is_valid || measStat->avg_measurements <= 0)
     {
       measStat->avg_measurements = 5; // Default to 5 measurements
@@ -1470,11 +1501,8 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
     log_i("Using SD card configuration");
 
     // Validate loaded configuration
-    // Valid submultiples of 60: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60
-    int valid_intervals[] = {1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60};
-    bool is_valid = false;
-    
-    for (int i = 0; i < sizeof(valid_intervals)/sizeof(valid_intervals[0]); i++)
+
+    for (int i = 0; i < sizeof(valid_intervals) / sizeof(valid_intervals[0]); i++)
     {
       if (measStat->avg_measurements == valid_intervals[i])
       {
@@ -1482,7 +1510,7 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
         break;
       }
     }
-    
+
     if (!is_valid || measStat->avg_measurements <= 0)
     {
       log_w("Invalid avg_measurements (%d), must be submultiple of 60. Setting to 5", measStat->avg_measurements);
@@ -1525,6 +1553,73 @@ void vMsp_setGpioPins(void)
   pinMode(MODEM_RST, OUTPUT);
   digitalWrite(MODEM_RST, HIGH);
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+}
+
+/**
+ * @brief Scan I2C bus for connected devices and log their addresses
+ */
+void vMsp_scanI2CDevices(void)
+{
+  log_i("=== I2C Device Scanner ===");
+  log_i("Scanning I2C bus for devices...");
+
+  int deviceCount = 0;
+
+  for (uint8_t address = 1; address < 127; address++)
+  {
+    Wire.beginTransmission(address);
+    uint8_t error = Wire.endTransmission();
+
+    if (error == 0)
+    {
+      log_i("I2C device found at address 0x%02X (%d decimal)", address, address);
+      deviceCount++;
+
+      // Add known device identification
+      switch (address)
+      {
+        case 0x77:
+          log_i("  -> Likely BME680 (address 0x77)");
+          break;
+        case 0x76:
+          log_i("  -> Likely BME680 alternative address (0x76)");
+          break;
+        case 0x04:
+          log_i("  -> Likely MICS6814 (address 0x04)");
+          break;
+        case 0x75:
+          log_i("  -> Likely MICS4514/DFRobot SEN0377 (address 0x75)");
+          break;
+        case 0x3C:
+        case 0x3D:
+          log_i("  -> Likely OLED Display (address 0x%02X)", address);
+          break;
+        case 0x48:
+        case 0x49:
+        case 0x4A:
+        case 0x4B:
+          log_i("  -> Likely ADS1115/ADS1015 ADC (address 0x%02X)", address);
+          break;
+        default:
+          log_i("  -> Unknown device type");
+          break;
+      }
+    }
+    else if (error == 4)
+    {
+      log_e("Unknown error at address 0x%02X", address);
+    }
+  }
+
+  if (deviceCount == 0)
+  {
+    log_w("No I2C devices found!");
+  }
+  else
+  {
+    log_i("Scan complete. Found %d I2C devices.", deviceCount);
+  }
+  log_i("=== End I2C Scanner ===");
 }
 
 //************************************** EOF **************************************

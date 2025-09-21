@@ -19,6 +19,9 @@
 #include "shared_values.h"
 #include <bsec.h>
 
+// Forward declaration to avoid circular includes
+class DFRobot_MICS;
+
 #define SEA_LEVEL_ALTITUDE_IN_M     122.0f /*!<sea level altitude in meters, defaults to Milan, Italy */
 
 #define REFERENCE_TEMP_C            25.0f             // Standard temperature in Celsius
@@ -147,20 +150,61 @@ void vHalSensor_performAverages(errorVars_t *p_tErr, sensorData_t *p_tData, devi
 
 
 /*****************************************************************************************************
- * @brief   evaluates the MSP# index from ug/m3 concentrations of specific gases using standard 
- *          IAQ values (needs 1h averages) 
- * 
- *          possible returned values are: 
+ * @brief   evaluates the MSP# index from ug/m3 concentrations of specific gases using standard
+ *          IAQ values (needs 1h averages)
+ *
+ *          possible returned values are:
  *          0 -> n.d.(grey);
- *          1 -> good(green); 
- *          2 -> acceptable(yellow);  
- *          3 -> bad(red); 
+ *          1 -> good(green);
+ *          2 -> acceptable(yellow);
+ *          3 -> bad(red);
  *          4 -> really bad(black)
- * 
+ *
  * @param  p_tData  pointer to sensor data
- * @return short 
+ * @return short
  *******************************************************************************************************/
 short sHalSensor_evaluateMSPIndex(sensorData_t *p_tData);
+
+/*****************************************************************************************************
+ * @brief   Custom MICS4514 gas calculation functions using calibration parameters from config
+ *          These functions use ADC readings and calibration values instead of DFRobot's
+ *          hardcoded coefficients
+ *******************************************************************************************************/
+
+/**
+ * @brief Read raw ADC values from MICS4514 sensor and accumulate for averaging
+ * @param mics4514          Reference to DFRobot MICS4514 sensor object
+ * @param p_tData           Pointer to sensor data structure with accumulator
+ * @return mspStatus_t      STATUS_OK on success, STATUS_ERR on failure
+ */
+mspStatus_t tHalSensor_readMICS4514_ADC(DFRobot_MICS& mics4514, sensorData_t* p_tData);
+
+/**
+ * @brief Calculate gas concentrations from averaged MICS4514 ADC values
+ * @param p_tData           Pointer to sensor data structure with calibration values and accumulated ADC
+ * @param p_tMicsReading    Pointer to structure to store the calculated gas concentrations
+ * @param measurement_count Number of measurements accumulated
+ * @return mspStatus_t      STATUS_OK on success, STATUS_ERR on failure
+ */
+mspStatus_t tHalSensor_calculateMICS4514_Gases(sensorData_t* p_tData, MICS4514SensorReading_t* p_tMicsReading, int measurement_count);
+
+/**
+ * @brief Calculate immediate gas concentrations from current MICS4514 ADC reading (for display)
+ * @param mics4514          Reference to DFRobot MICS4514 sensor object
+ * @param p_tData           Pointer to sensor data structure with calibration values
+ * @param p_tMicsReading    Pointer to structure to store the calculated gas concentrations
+ * @return mspStatus_t      STATUS_OK on success, STATUS_ERR on failure
+ */
+mspStatus_t tHalSensor_calculateMICS4514_Immediate(DFRobot_MICS& mics4514, sensorData_t* p_tData, MICS4514SensorReading_t* p_tMicsReading);
+
+/**
+ * @brief Calculate gas concentrations from Rs/R0 ratios using MICS4514 datasheet formulas
+ * @param rs_r0_red         Rs/R0 ratio for RED sensor (CO, NH3)
+ * @param rs_r0_ox          Rs/R0 ratio for OX sensor (NO2)
+ * @param p_tMicsReading    Pointer to structure to store the calculated gas concentrations
+ * @return mspStatus_t      STATUS_OK on success, STATUS_ERR on failure
+ */
+mspStatus_t tHalSensor_calculateGasFromRsR0(const float rs_r0_red, const float rs_r0_ox, MICS4514SensorReading_t* p_tMicsReading);
 
 
 #endif

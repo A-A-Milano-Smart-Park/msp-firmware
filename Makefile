@@ -23,7 +23,7 @@ LIBRARIES_URLS := \
 
 # The FQBN is the core, followed by the board.
 CORE_NAME := $(shell echo $(CORE) | cut -f1 -d@)
-FQBN := $(CORE_NAME):$(BOARD)
+FQBN := $(CORE_NAME):$(BOARD):FlashMode=dio,FlashFreq=40,FlashSize=8M,PartitionScheme=default,PSRAM=disabled
 
 # Treat all warnings as errors.
 BUILDPROP := compiler.warning_flags.all='-Wall -Wextra'
@@ -143,6 +143,8 @@ properties:
 	--build-path $(BUILDDIR) \
 	--build-property $(BUILDPROP) \
 	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)" $(CPP_EXTRA_FLAGS)' \
+	--build-property 'build.partitions=partitions' \
+	--build-property 'build.custom_partitions.csv=$(SRCDIR)/partitions.csv' \
 	--warnings all --log-file $(LOGDIR)/build.log --log-level debug $(ARGS_VERBOSE) \
 	--fqbn $(FQBN) $(SRCDIR) --show-properties
 
@@ -155,6 +157,8 @@ $(BUILDDIR)/$(SKETCH).ino.elf: $(SRCS)
 	--build-property $(BUILDPROP) \
 	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)" $(CPP_EXTRA_FLAGS)' \
 	--build-property 'build.code_debug=$(CUSTOM_DEBUG_LEVEL)' \
+	--build-property 'build.partitions=partitions' \
+	--build-property 'build.custom_partitions.csv=$(SRCDIR)/partitions.csv' \
 	--warnings all --log-file $(LOGDIR)/build.log --log-level debug $(ARGS_VERBOSE) \
 	--fqbn $(FQBN) $(SRCDIR)
 
