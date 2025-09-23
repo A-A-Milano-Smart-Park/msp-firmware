@@ -522,6 +522,9 @@ void loop()
         log_w("Firmware update check failed or no updates available");
       }
 
+      // Test midnight behavior scenarios
+      vHalFirmware_testMidnightBehavior(&sysData, &sysStat, &devinfo);
+
       log_i("=== Firmware Update Test Completed ===");
 #endif
 
@@ -555,18 +558,6 @@ void loop()
       measStat.curr_minutes = timeinfo.tm_min;
       measStat.curr_seconds = timeinfo.tm_sec;
       measStat.curr_total_seconds = measStat.curr_minutes * SEC_IN_MIN + measStat.curr_seconds;
-
-      // Check if daily NTP sync is needed (at 00:00:00)
-      int current_day = timeinfo.tm_yday; // Day of year (0-365)
-      if (((timeinfo.tm_hour == 0) && (timeinfo.tm_min == 0) && (timeinfo.tm_sec == 0)) &&
-          (current_day != sysData.ntp_last_sync_day))
-      {
-        log_i("Daily NTP sync needed - triggering time synchronization");
-        sysData.ntp_last_sync_day = current_day;
-        requestNetworkConnection(); // This will trigger NTP sync
-        mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
-        break;
-      }
 
       // Calculate if we are exactly at the start of a minute (00 seconds)
       // We trigger measurement only when seconds == 0, ensuring exact minute alignment
@@ -1085,12 +1076,59 @@ void loop()
     // Check if it's time to send data
     // We transmit when: 1) we have collected avg_measurements AND 2) we're at a transmission boundary AND 3) haven't transmitted at this boundary yet
     bool have_enough_measurements = (measStat.measurement_count >= measStat.avg_measurements);
-    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.avg_measurements) == 0);   // Transmit at intervals
+
+    // Improved boundary logic: check if current minute is at interval boundary OR enough time has passed since last transmission
+    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.avg_measurements) == 0); // Standard interval boundary
+
+    // Alternative boundary check: if enough time has passed since last transmission (handles hour rollover)
+    bool enough_time_passed = false;
+    if (measStat.last_transmission_minute >= 0) // Only check if we have a previous transmission
+    {
+      int minutes_since_last_tx;
+      if (measStat.curr_minutes >= measStat.last_transmission_minute)
+      {
+        // Same hour
+        minutes_since_last_tx = measStat.curr_minutes - measStat.last_transmission_minute;
+      }
+      else
+      {
+        // Hour rollover (e.g., from 58 to 2)
+        minutes_since_last_tx = (60 - measStat.last_transmission_minute) + measStat.curr_minutes;
+      }
+      enough_time_passed = (minutes_since_last_tx >= measStat.avg_measurements);
+    }
+    else
+    {
+      // First transmission ever - always allow
+      enough_time_passed = true;
+    }
+
+    // Use either standard boundary OR enough time has passed
+    at_transmission_boundary = at_transmission_boundary || enough_time_passed;
+
     bool boundary_not_transmitted = (measStat.last_transmission_minute != measStat.curr_minutes); // Prevent duplicate transmissions at same boundary
+
+    // Enhanced logging for boundary logic debugging
+    int minutes_since_last_tx = 0;
+    if (measStat.last_transmission_minute >= 0)
+    {
+      if (measStat.curr_minutes >= measStat.last_transmission_minute)
+      {
+        minutes_since_last_tx = measStat.curr_minutes - measStat.last_transmission_minute;
+      }
+      else
+      {
+        minutes_since_last_tx = (60 - measStat.last_transmission_minute) + measStat.curr_minutes;
+      }
+    }
 
     log_i("TRANSMISSION CHECK: collected %d/%d measurements, boundary=%s (minute %d, interval=%d), last_tx_minute=%d",
           measStat.measurement_count, measStat.avg_measurements,
           at_transmission_boundary ? "YES" : "NO", measStat.curr_minutes, measStat.avg_measurements, measStat.last_transmission_minute);
+
+    log_i("BOUNDARY DETAILS: standard_boundary=%s, enough_time_passed=%s, minutes_since_last_tx=%d",
+          ((measStat.curr_minutes % measStat.avg_measurements) == 0) ? "YES" : "NO",
+          enough_time_passed ? "YES" : "NO", minutes_since_last_tx);
 
     if (have_enough_measurements && at_transmission_boundary && boundary_not_transmitted)
     {
@@ -1291,17 +1329,42 @@ void loop()
       int current_day = timeinfo.tm_yday; // Day of year (0-365)
       static int last_fw_check_day = -1;
 
-      // Check if this is midnight transmission (00:00) and we haven't checked today
-      if ((timeinfo.tm_hour == 0) && (timeinfo.tm_min == 0) &&
+      // Check if this is midnight hour transmission (00:xx) and we haven't checked today
+      // Allow firmware check for any minute in the midnight hour, not just 00:00
+      if ((timeinfo.tm_hour == 0) &&
           (current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
       {
-        log_i("Midnight data transmission completed - triggering daily firmware update check");
+        log_i("Midnight hour data transmission completed (time: %02d:%02d) - triggering daily firmware update check",
+              timeinfo.tm_hour, timeinfo.tm_min);
 
         if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
         {
           last_fw_check_day = current_day;
           log_i("Firmware update check completed for day %d", current_day);
         }
+        else
+        {
+          log_w("Firmware update check failed for day %d", current_day);
+        }
+      }
+      else
+      {
+        // Enhanced logging to understand why firmware check was skipped
+        log_d("Firmware check skipped: hour=%d, min=%d, day=%d, last_check_day=%d, fwAutoUpgrade=%s",
+              timeinfo.tm_hour, timeinfo.tm_min, current_day, last_fw_check_day,
+              sysStat.fwAutoUpgrade ? "true" : "false");
+      }
+
+      log_i("NTP SYNC CHECK - current_day:%d - last_sync_day:%d", current_day, sysData.ntp_last_sync_day);
+      // Check if daily NTP sync is needed (at 00:00:00)
+      if (((timeinfo.tm_hour == 0) && (timeinfo.tm_min == 0) && (timeinfo.tm_sec == 0)) &&
+          (current_day != sysData.ntp_last_sync_day))
+      {
+        log_i("Daily NTP sync needed - triggering time synchronization");
+        sysData.ntp_last_sync_day = current_day;
+        requestNetworkConnection(); // This will trigger NTP sync
+        mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+        break;
       }
     }
 
@@ -1586,31 +1649,31 @@ void vMsp_scanI2CDevices(void)
       // Add known device identification
       switch (address)
       {
-        case 0x77:
-          log_i("  -> Likely BME680 (address 0x77)");
-          break;
-        case 0x76:
-          log_i("  -> Likely BME680 alternative address (0x76)");
-          break;
-        case 0x04:
-          log_i("  -> Likely MICS6814 (address 0x04)");
-          break;
-        case 0x75:
-          log_i("  -> Likely MICS4514/DFRobot SEN0377 (address 0x75)");
-          break;
-        case 0x3C:
-        case 0x3D:
-          log_i("  -> Likely OLED Display (address 0x%02X)", address);
-          break;
-        case 0x48:
-        case 0x49:
-        case 0x4A:
-        case 0x4B:
-          log_i("  -> Likely ADS1115/ADS1015 ADC (address 0x%02X)", address);
-          break;
-        default:
-          log_i("  -> Unknown device type");
-          break;
+      case 0x77:
+        log_i("  -> Likely BME680 (address 0x77)");
+        break;
+      case 0x76:
+        log_i("  -> Likely BME680 alternative address (0x76)");
+        break;
+      case 0x04:
+        log_i("  -> Likely MICS6814 (address 0x04)");
+        break;
+      case 0x75:
+        log_i("  -> Likely MICS4514/DFRobot SEN0377 (address 0x75)");
+        break;
+      case 0x3C:
+      case 0x3D:
+        log_i("  -> Likely OLED Display (address 0x%02X)", address);
+        break;
+      case 0x48:
+      case 0x49:
+      case 0x4A:
+      case 0x4B:
+        log_i("  -> Likely ADS1115/ADS1015 ADC (address 0x%02X)", address);
+        break;
+      default:
+        log_i("  -> Unknown device type");
+        break;
       }
     }
     else if (error == 4)

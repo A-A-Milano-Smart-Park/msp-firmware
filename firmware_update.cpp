@@ -62,10 +62,14 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
 {
     log_i("Checking for firmware updates...");
 
+    // Set firmware operation flag to prevent network disconnection during update check
+    setFirmwareOperationInProgress(true);
+
     // Ensure we have internet connection
     if (!WiFi.isConnected() && !sysStatus->use_modem)
     {
         log_w("WiFi not connected for firmware update check");
+        setFirmwareOperationInProgress(false); // Clear flag before returning
         requestNetworkConnection();
         return false;
     }
@@ -76,6 +80,7 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
     if (!http.begin(GITHUB_API_URL))
     {
         log_e("Failed to initialize HTTP client for GitHub API");
+        setFirmwareOperationInProgress(false);
         return false;
     }
 
@@ -88,6 +93,7 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
     {
         log_e("GitHub API request failed with code: %d", httpCode);
         http.end();
+        setFirmwareOperationInProgress(false);
         return false;
     }
 
@@ -103,6 +109,7 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
     if (error)
     {
         log_e("JSON parsing failed: %s", error.c_str());
+        setFirmwareOperationInProgress(false);
         return false;
     }
 
@@ -131,6 +138,7 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
     if (downloadUrl.isEmpty())
     {
         log_e("No application binary (%s) found in release assets", binaryFileName.c_str());
+        setFirmwareOperationInProgress(false);
         return true;
     }
 
@@ -149,6 +157,8 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
         log_i("No firmware update needed, current version is up to date");
     }
 
+    // Clear firmware operation flag before returning
+    setFirmwareOperationInProgress(false);
     return true;
 }
 

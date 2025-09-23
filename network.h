@@ -158,6 +158,12 @@ void updateNetworkConfig(void);
 bool getNetworkStatus(bool *wifiConnected, bool *gsmConnected, bool *timeSync);
 
 /**
+ * @brief Set firmware operation in progress flag to prevent network disconnection
+ * @details Prevents automatic network disconnection during critical firmware operations
+ */
+void setFirmwareOperationInProgress(bool inProgress);
+
+/**
  * @brief Check if network task is running
  * @return true if network task is active, false otherwise
  */

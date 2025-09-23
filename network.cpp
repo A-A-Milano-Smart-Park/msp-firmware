@@ -56,7 +56,6 @@ static StaticEventGroup_t networkEventGroupBuffer;
 static SemaphoreHandle_t networkStateMutex = NULL;
 static StaticSemaphore_t networkStateMutexBuffer;
 
-
 // Network state variables (protected by mutex)
 static struct
 {
@@ -70,7 +69,7 @@ static struct
     netwkr_task_evt_t nextState;
     bool taskRunning;
     bool configurationLoaded;
-    int ntpSyncExpired; // Counter for NTP sync expiration
+    int ntpSyncExpired;              // Counter for NTP sync expiration
     bool firmwareDownloadInProgress; // Flag to skip connectivity checks during firmware download
 } networkState = {
     .wifiConnected = false,
@@ -127,13 +126,13 @@ bool enqueueSendData(const send_data_t &data, TickType_t ticksToWait)
     UBaseType_t queueSpaces = uxQueueSpacesAvailable(sendDataQueue);
     UBaseType_t queueWaiting = uxQueueMessagesWaiting(sendDataQueue);
     log_i("Queue status before enqueue: %d spaces available, %d items waiting", queueSpaces, queueWaiting);
-    
+
     // Alert if queue is accumulating items (suggests processing issues)
     if (queueWaiting >= (SEND_DATA_QUEUE_LENGTH / 2))
     {
         log_w("QUEUE ACCUMULATION WARNING: %d/%d items queued (>50%% full)", queueWaiting, SEND_DATA_QUEUE_LENGTH);
         log_w("This suggests the network task may not be processing the queue effectively");
-        
+
         if (queueWaiting >= (SEND_DATA_QUEUE_LENGTH * 3 / 4))
         {
             log_e("QUEUE CRITICAL: %d/%d items queued (>75%% full) - risk of data loss!", queueWaiting, SEND_DATA_QUEUE_LENGTH);
@@ -789,6 +788,90 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
     setenv("TZ", tzRule.c_str(), 1);
     tzset();
 
+#ifdef FAKE_NTP_TIME
+    // Fake NTP sync for testing
+    if (strlen(FAKE_NTP_TIME) > 0)
+    {
+        struct tm timeInfo;
+        time_t now;
+        time(&now);
+        localtime_r(&now, &timeInfo);
+
+        int year, month, day, hour, minute, second;
+        static bool validTime = false;
+        if (validTime == true)
+        {
+            // Update system status and network state like real NTP sync
+            sysStatus->datetime = true;
+            if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+            {
+                networkState.timeSync = true;
+                xSemaphoreGive(networkStateMutex);
+            }
+
+            // Send the event that main loop is waiting for
+            sendNetworkEvent(NET_EVENT_TIME_SYNCED);
+            return true;
+        }
+
+        // Try full date-time format first: "YYYY-MM-DD HH:MM:SS"
+        if (sscanf(FAKE_NTP_TIME, "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour, &minute, &second) == 6)
+        {
+            if (year >= 2020 && year <= 2030 && month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
+                hour >= 0 && hour < 24 && minute >= 0 && minute < 60 && second >= 0 && second < 60)
+            {
+                timeInfo.tm_year = year - 1900;
+                timeInfo.tm_mon = month - 1;
+                timeInfo.tm_mday = day;
+                validTime = true;
+            }
+        }
+        // Fallback to time-only format: "HH:MM:SS" (uses current date)
+        else if (sscanf(FAKE_NTP_TIME, "%d:%d:%d", &hour, &minute, &second) == 3)
+        {
+            if (hour >= 0 && hour < 24 && minute >= 0 && minute < 60 && second >= 0 && second < 60)
+            {
+                validTime = true;
+            }
+        }
+
+        if (validTime)
+        {
+            timeInfo.tm_hour = hour;
+            timeInfo.tm_min = minute;
+            timeInfo.tm_sec = second;
+            timeInfo.tm_isdst = -1;
+
+            time_t fakeTime = mktime(&timeInfo);
+            if (fakeTime > 0)
+            {
+                struct timeval tv = {fakeTime, 0};
+                settimeofday(&tv, NULL);
+
+                strftime(sysData->Date, sizeof(sysData->Date), "%d/%m/%Y", &timeInfo);
+                strftime(sysData->Time, sizeof(sysData->Time), "%T", &timeInfo);
+                sysData->currentDataTime = String(sysData->Date) + " " + String(sysData->Time);
+
+                log_i("Fake time set: %s", sysData->currentDataTime.c_str());
+                updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_DATETIME_OK);
+
+                // Update system status and network state like real NTP sync
+                sysStatus->datetime = true;
+                if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+                {
+                    networkState.timeSync = true;
+                    xSemaphoreGive(networkStateMutex);
+                }
+
+                // Send the event that main loop is waiting for
+                sendNetworkEvent(NET_EVENT_TIME_SYNCED);
+                return true;
+            }
+        }
+        log_w("Fake time setup failed, using real NTP");
+    }
+#endif
+
     // Validate NTP server
     String ntpServer = (sysData->ntp_server.length() > 0) ? sysData->ntp_server : NTP_SERVER_DEFAULT;
     log_i("Using NTP server: %s", ntpServer.c_str());
@@ -895,30 +978,30 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
 }
 
 // Helper function to ping server and check connectivity
-static bool pingServer(const String& serverName)
+static bool pingServer(const String &serverName)
 {
     log_i("Pinging server to check connectivity: %s", serverName.c_str());
-    
+
     // Create a simple HTTP client for ping
     HTTPClient pingClient;
     WiFiClientSecure *pingSSLClient = new WiFiClientSecure;
-    
+
     if (!pingSSLClient)
     {
         log_e("Failed to create SSL client for server ping");
         return false;
     }
-    
+
     // Configure SSL client (same settings as main transmission)
-    pingSSLClient->setInsecure(); // Skip certificate validation
+    pingSSLClient->setInsecure();                           // Skip certificate validation
     String pingURL = "https://" + serverName + "/api/ping"; // Try ping endpoint first
-    
+
     pingClient.begin(*pingSSLClient, pingURL);
     pingClient.setTimeout(10000); // Short 10-second timeout for ping
-    
+
     // Send a simple GET request to check server availability
     int httpCode = pingClient.GET();
-    
+
     // If ping endpoint doesn't exist, try the main data endpoint with HEAD
     if (httpCode == 404)
     {
@@ -927,9 +1010,9 @@ static bool pingServer(const String& serverName)
         pingClient.begin(*pingSSLClient, dataURL);
         httpCode = pingClient.sendRequest("HEAD", "");
     }
-    
+
     bool serverAvailable = (httpCode > 0 && httpCode < 500); // Any response except server errors
-    
+
     if (serverAvailable)
     {
         log_i("Server ping successful (HTTP %d) - server is responsive", httpCode);
@@ -938,10 +1021,10 @@ static bool pingServer(const String& serverName)
     {
         log_w("Server ping failed (HTTP %d) - server may be down or overloaded", httpCode);
     }
-    
+
     pingClient.end();
     delete pingSSLClient;
-    
+
     return serverAvailable;
 }
 
@@ -949,6 +1032,17 @@ static bool pingServer(const String& serverName)
 static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devInfo,
                              systemStatus_t *sysStatus, systemData_t *sysData)
 {
+#ifdef FAKE_NTP_TIME
+    // Skip data transmission when fake NTP is active
+    if (strlen(FAKE_NTP_TIME) > 0)
+    {
+        log_i("FAKE_NTP_TIME active - skipping data transmission");
+        sysData->sent_ok = true;
+        sendNetworkEvent(NET_EVENT_DATA_SENT);
+        return true;
+    }
+#endif
+
     if (!sslClient)
     {
         log_e("SSL client not initialized");
@@ -970,14 +1064,14 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
 
     log_i("Sending data to server: %s", sysData->server.c_str());
     log_i("Device ID: %s", devInfo->deviceid.c_str());
-    
+
     // Step 1: Ping server to verify connectivity before data transmission
     if (!pingServer(sysData->server))
     {
         log_e("Server ping failed - aborting data transmission to prevent timeouts");
         return false;
     }
-    
+
     log_i("Server ping successful - proceeding with data transmission");
 
     // Set SSL verification time
@@ -1073,7 +1167,7 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
             // Send request
             size_t written = sslClient->print(httpRequest);
             bool dataSentSuccessfully = (written == httpRequest.length());
-            
+
             if (!dataSentSuccessfully)
             {
                 log_w("Incomplete request sent: %d/%d bytes", written, httpRequest.length());
@@ -1125,11 +1219,11 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
             log_i("  - Data received: %s", dataReceived ? "YES" : "NO");
             log_i("  - Headers completed: %s", headerCompleted ? "YES" : "NO");
             log_i("  - Response length: %d bytes", response.length());
-            
+
             if (response.length() > 0)
             {
                 log_i("  - Response preview (first 200 chars): %s", response.substring(0, 200).c_str());
-                
+
                 // Extract status line for detailed logging
                 int statusLineEnd = response.indexOf('\r');
                 if (statusLineEnd > 0)
@@ -1157,7 +1251,7 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
                 log_e("TIMEOUT: No response received - likely SSL timeout or connection issue");
                 log_e("This could be due to server overload, network issues, or SSL problems");
                 wasSSLTimeout = true; // Mark this attempt as SSL timeout
-                
+
                 // Smart assumption logic: If server ping was successful AND data was sent completely,
                 // assume the data reached the server even though we didn't get a response
                 if (dataSentSuccessfully)
@@ -1179,7 +1273,7 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
                 // We got an HTTP response but it's not successful
                 String statusLine = response.substring(0, response.indexOf('\r'));
                 log_e("HTTP ERROR: Server returned error status: %s", statusLine.c_str());
-                
+
                 // Log response body if available for debugging
                 if (response.indexOf("Content-Length:") >= 0)
                 {
@@ -1369,7 +1463,7 @@ static void networkTask(void *pvParameters)
             {
                 // Timeout occurred - perform periodic maintenance
                 log_v("Network task periodic check");
-                
+
                 // PRIORITY: Check if queue has accumulated items that need processing
                 int queueSize = uxQueueMessagesWaiting(sendDataQueue);
                 if (queueSize > 0)
@@ -1555,11 +1649,11 @@ static void networkTask(void *pvParameters)
             if (currentQueueSize > 0)
             {
                 log_i("Queue contains %d items that need processing", currentQueueSize);
-                
+
                 // If queue is getting full (>75% capacity), prioritize processing over connection management
                 if (currentQueueSize >= (SEND_DATA_QUEUE_LENGTH * 3 / 4))
                 {
-                    log_w("Queue is %d/%d (>75%% full) - prioritizing queue processing over connection management", 
+                    log_w("Queue is %d/%d (>75%% full) - prioritizing queue processing over connection management",
                           currentQueueSize, SEND_DATA_QUEUE_LENGTH);
                 }
             }
@@ -1587,15 +1681,15 @@ static void networkTask(void *pvParameters)
             if (!isNetworkConnected())
             {
                 log_w("No network connection available for data transmission");
-                
+
                 // IMPORTANT: Don't abandon the queue! Try to establish connection but keep event active
                 if (currentQueueSize > 0)
                 {
                     log_w("Queue has %d items waiting - will attempt connection then retry queue processing", currentQueueSize);
-                    
+
                     // Set a flag or re-trigger the event after connection attempt
                     updateNetworkState(NETWRK_EVT_INIT_CONNECTION);
-                    
+
                     // Re-trigger data processing event to ensure queue gets processed after connection
                     log_i("Re-triggering NET_EVT_DATA_READY to ensure queue processing after connection");
                     xEventGroupSetBits(networkEventGroup, NET_EVT_DATA_READY);
@@ -1613,7 +1707,7 @@ static void networkTask(void *pvParameters)
             int processedCount = 0;
             int failedCount = 0;
             send_data_t currentData;
-            
+
             int initialQueueSize = uxQueueMessagesWaiting(sendDataQueue);
             struct tm currentTime;
             String processingTimeStr = "UNKNOWN";
@@ -1627,26 +1721,26 @@ static void networkTask(void *pvParameters)
             log_i("=== QUEUE PROCESSING START ===");
             log_i("Processing time: %s (minute: %02d)", processingTimeStr.c_str(), currentTime.tm_min);
             log_i("Initial queue size: %d items", initialQueueSize);
-            
+
             if (initialQueueSize > 1)
             {
                 log_w("MULTIPLE DATA ITEMS DETECTED! This may cause duplicate transmissions at peak times");
                 log_w("Queue contains %d items - each will be processed individually", initialQueueSize);
             }
-            
+
             while (dequeueSendData(&currentData, 0))
             { // Non-blocking dequeue
                 processedCount++;
                 int remainingItems = uxQueueMessagesWaiting(sendDataQueue);
-                
+
                 log_i("=== PROCESSING ITEM %d/%d ===", processedCount, initialQueueSize);
                 log_i("Queue items remaining: %d", remainingItems);
-                
+
                 // Analyze the data timestamp vs current time
                 struct tm dataTime = currentData.sendTimeInfo;
                 log_i("Data timestamp: %02d:%02d:%02d, Current time: %s",
                       dataTime.tm_hour, dataTime.tm_min, dataTime.tm_sec, processingTimeStr.c_str());
-                
+
                 // Check if this data originated from a peak time
                 bool dataFromPeakTime = (dataTime.tm_min == 0 || dataTime.tm_min == 30);
                 if (dataFromPeakTime)
@@ -1761,10 +1855,10 @@ static void networkTask(void *pvParameters)
             {
                 log_w("Failed to process: %d data items", failedCount);
             }
-            
+
             int finalQueueSize = uxQueueMessagesWaiting(sendDataQueue);
             log_i("Final queue size: %d items (started with %d)", finalQueueSize, initialQueueSize);
-            
+
             if (initialQueueSize > 1 && processedCount > 1)
             {
                 log_w("MULTIPLE TRANSMISSIONS COMPLETED: %d items processed from peak/near-peak time", processedCount);
@@ -1782,6 +1876,14 @@ static void networkTask(void *pvParameters)
 
         case NETWRK_EVT_DEINIT_CONNECTION:
         {
+            // Check if firmware operation is in progress - if so, skip disconnection
+            if (networkState.firmwareDownloadInProgress)
+            {
+                log_i("Firmware operation in progress - skipping network disconnection");
+                updateNetworkState(NETWRK_EVT_WAIT);
+                break;
+            }
+
             log_i("Deinitializing network connections...");
 
             // Disconnect WiFi
@@ -1986,6 +2088,20 @@ void updateNetworkConfig()
     if (networkEventGroup)
     {
         xEventGroupSetBits(networkEventGroup, NET_EVT_CONFIG_UPDATED);
+    }
+}
+
+void setFirmwareOperationInProgress(bool inProgress)
+{
+    if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+    {
+        networkState.firmwareDownloadInProgress = inProgress;
+        log_i("Firmware operation in progress flag set to: %s", inProgress ? "true" : "false");
+        xSemaphoreGive(networkStateMutex);
+    }
+    else
+    {
+        log_e("Failed to acquire mutex for setting firmware operation flag");
     }
 }
 
