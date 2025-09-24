@@ -347,6 +347,12 @@ void displayTask(void *pvParameters)
       dispFSM.next_state = dispFSM.return_state;
       break;
     }
+    case DISP_EVENT_FOTA_IN_PROGRESS:
+    {
+      vHalDisplay_drawTwoLines("Firmware Update", "In Progress...", GENERIC_DISP_TIMEOUT, &data.sysStat, &data.devInfo);
+      dispFSM.next_state = dispFSM.return_state;
+      break;
+    }
     // network cases
     case DISP_EVENT_CONN_TO_WIFI:
     {

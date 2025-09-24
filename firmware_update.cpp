@@ -66,7 +66,7 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
     setFirmwareOperationInProgress(true);
 
     // Ensure we have internet connection
-    if (!WiFi.isConnected() && !sysStatus->use_modem)
+    if (isNetworkConnected() == false)
     {
         log_w("WiFi not connected for firmware update check");
         setFirmwareOperationInProgress(false); // Clear flag before returning
@@ -1909,7 +1909,13 @@ bool bHalFirmware_checkAndApplyPendingUpdate(const char* firmwarePath)
         }
         
         log_i("OTA update successful - device will restart with new firmware");
-        delay(1000);
+        
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        
+        SD.remove(firmwarePath);
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+
         esp_restart(); // This will boot into new firmware
         return true; // Never reached
     } else {

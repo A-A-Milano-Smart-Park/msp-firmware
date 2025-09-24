@@ -158,6 +158,12 @@ void updateNetworkConfig(void);
 bool getNetworkStatus(bool *wifiConnected, bool *gsmConnected, bool *timeSync);
 
 /**
+ * @brief Check if network is connected
+ * @return true if network is connected, false otherwise
+ */
+bool isNetworkConnected();
+
+/**
  * @brief Set firmware operation in progress flag to prevent network disconnection
  * @details Prevents automatic network disconnection during critical firmware operations
  */

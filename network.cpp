@@ -108,7 +108,6 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
                              systemStatus_t *sysStatus, systemData_t *sysData);
 static void updateNetworkState(netwkr_task_evt_t newState);
 static netwkr_task_evt_t getNetworkState();
-static bool isNetworkConnected();
 static bool loadNetworkConfiguration(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus,
                                      systemData_t *sysData, sensorData_t *sensorData,
                                      deviceMeasurement_t *measStat);
@@ -317,20 +316,33 @@ uint8_t vHalNetwork_modemDisconnect()
 // Network state management (thread-safe)
 static void updateNetworkState(netwkr_task_evt_t newState)
 {
-    // No mutex needed - only called from within network task
-    networkState.nextState = newState;
+    if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+    {
+        networkState.nextState = newState;
+        xSemaphoreGive(networkStateMutex);
+    }
 }
 
 static netwkr_task_evt_t getNetworkState()
 {
-    // No mutex needed - only called from within network task
-    return networkState.currentState;
+    netwkr_task_evt_t state = NETWRK_EVT_WAIT;
+    if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+    {
+        state = networkState.currentState;
+        xSemaphoreGive(networkStateMutex);
+    }
+    return state;
 }
 
-static bool isNetworkConnected()
+bool isNetworkConnected()
 {
-    // No mutex needed - only called from within network task
-    return (networkState.wifiConnected) || (networkState.gsmConnected);
+    bool connected = false;
+    if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+    {
+        connected = (networkState.wifiConnected) || (networkState.gsmConnected);
+        xSemaphoreGive(networkStateMutex);
+    }
+    return connected;
 }
 
 /**
@@ -359,11 +371,21 @@ static bool testInternetConnectivity()
         int dnsResult;
 
         // Use WiFi hostByName for WiFi connections, or try TinyGSM for cellular
-        if (networkState.wifiConnected)
+        bool wifiConnected = false;
+        bool gsmConnected = false;
+
+        if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+        {
+            wifiConnected = networkState.wifiConnected;
+            gsmConnected = networkState.gsmConnected;
+            xSemaphoreGive(networkStateMutex);
+        }
+
+        if (wifiConnected)
         {
             dnsResult = WiFi.hostByName(testDomains[i], result);
         }
-        else if (networkState.gsmConnected && modem)
+        else if (gsmConnected && modem)
         {
             // For GSM connections, we can try to resolve through the modem
             // Note: Some modems support DNS resolution, but this is a simpler check
@@ -1567,7 +1589,6 @@ static void networkTask(void *pvParameters)
             if (connected)
             {
                 log_i("Network connection established successfully");
-                updateNetworkState(NETWRK_EVT_SYNC_DATETIME);
             }
             else
             {
@@ -1575,8 +1596,9 @@ static void networkTask(void *pvParameters)
                 // Exponential backoff delay
                 int backoffDelay = NETWORK_RETRY_DELAY_MS * (1 << min(currentRetries, 4));
                 delay(backoffDelay);
-                updateNetworkState(NETWRK_EVT_WAIT);
             }
+
+            updateNetworkState(NETWRK_EVT_WAIT);
             break;
         }
 

@@ -71,7 +71,7 @@ static Bsec bme680;
 static PMS pms(pmsSerial);
 
 // -- MICS4514 sensor constants (from DFRobot library)
-#define MICS4514_WARMUP_TIME_MIN 3 // Minimum warmup time in minutes
+#define MICS4514_WARMUP_TIME_MIN 2 // Minimum warmup time in minutes
 #define MICS4514_I2C_ADDR 0x75     // Default I2C address
 
 // -- MICS6814 sensors instances
@@ -457,10 +457,9 @@ void setup()
   if ((sysStat.configuration == true) || (sysStat.server_ok == true))
   {
     log_i("Configuration available, requesting network connection...");
-    // Request network connection (time sync will happen automatically)
-    requestNetworkConnection();
     mainStateMachine.current_state = SYS_STATE_WAIT_FOR_NTP_SYNC; // Wait for NTP sync first
     mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+    vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_NETWORK_CONN, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
   }
   else
   {
@@ -470,7 +469,7 @@ void setup()
   }
 
   //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  mainStateMachine.isFirstTransition = 1; // set first transition flag
+  mainStateMachine.isFirstTransition = true; // set first transition flag
 
   // copy the whole sensorData_accumulate into sensorData_single
   memcpy(&sensorData_single, &sensorData_accumulate, sizeof(sensorData_t));
@@ -490,14 +489,52 @@ void loop()
   case SYS_STATE_WAIT_FOR_NTP_SYNC:
   {
     log_i("Waiting for NTP synchronization...");
+    bool isConnected = false;
+    bool isTimeValid = getLocalTime(&timeinfo);
+
+    int current_day = timeinfo.tm_yday; // Day of year (0-365)
+
     if (mainStateMachine.isFirstTransition == true)
     {
+
+      log_i("NTP SYNC CHECK - current_day:%d - last_sync_day:%d", current_day, sysData.ntp_last_sync_day);
+      // Check if daily NTP sync is needed (at 00:00:00)
+      if ((current_day == sysData.ntp_last_sync_day) && (isTimeValid == true))
+      {
+        log_i("NTP in Sync >>> SYS_STATE_FW_VERSION_CHECK");
+        mainStateMachine.next_state = SYS_STATE_FW_VERSION_CHECK;
+        mainStateMachine.isFirstTransition = true;
+        mainStateMachine.prev_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+        break;
+      }
+      // If internet is not connected and a sync is needed, trigger a connection request
+      if (isNetworkConnected() == false)
+        requestNetworkConnection();
+
       vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_NETWORK_CONN, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       mainStateMachine.isFirstTransition = false;
     }
 
+    // Wait for the network connection event
+    if ((pdTRUE == waitForNetworkEvent(NET_EVENT_CONNECTED, pdMS_TO_TICKS(5000))) || (isNetworkConnected() == true))
+    {
+      isConnected = true;
+    }
+
+    if (isConnected || isNetworkConnected())
+    {
+      log_i("NTP sync Triggered");
+      requestTimeSync();
+    }
+    else
+    {
+      log_v("Still waiting for Connection...");
+      mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+      break;
+    }
+
     // Wait for network connection and automatic time sync from network task
-    if (pdTRUE == waitForNetworkEvent(NET_EVENT_TIME_SYNCED, pdMS_TO_TICKS(5000)))
+    if (pdTRUE == waitForNetworkEvent(NET_EVENT_TIME_SYNCED, portMAX_DELAY))
     {
       log_i("NTP sync completed, starting measurement cycle");
       // Record the sync day for daily tracking
@@ -522,15 +559,13 @@ void loop()
         log_w("Firmware update check failed or no updates available");
       }
 
-      // Test midnight behavior scenarios
-      vHalFirmware_testMidnightBehavior(&sysData, &sysStat, &devinfo);
-
       log_i("=== Firmware Update Test Completed ===");
 #endif
 
-      mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
+      mainStateMachine.next_state = SYS_STATE_FW_VERSION_CHECK;
       mainStateMachine.isFirstTransition = true;
       mainStateMachine.prev_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+      log_i("NTP sync >>>> SYS_STATE_FW_VERSION_CHECK");
     }
     else
     {
@@ -538,6 +573,76 @@ void loop()
       log_v("Still waiting for NTP sync...");
       mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
     }
+    break;
+  }
+  //------------------------------------------------------------------------------------------------------------------------
+  //------------------------------------------------------------------------------------------------------------------------
+  case SYS_STATE_FW_VERSION_CHECK:
+  {
+    static int last_fw_check_day = -1;
+    static int current_day = -1;
+    if (mainStateMachine.isFirstTransition == true)
+    {
+      // Check for firmware updates after midnight data transmission
+      if (getLocalTime(&timeinfo))
+      {
+        current_day = timeinfo.tm_yday; // Day of year (0-365)
+
+        // Check if this is midnight hour transmission (00:xx) and we haven't checked today
+        // Allow firmware check for any minute in the midnight hour, not just 00:00
+        if ( sysStat.fwAutoUpgrade &&
+             ((last_fw_check_day == -1) ||
+              ((timeinfo.tm_hour == 0) && (current_day != last_fw_check_day))))
+        {
+          log_d("Firmware check started: hour=%d, min=%d, day=%d, last_check_day=%d, fwAutoUpgrade=%s",
+                timeinfo.tm_hour, timeinfo.tm_min, current_day, last_fw_check_day,
+                sysStat.fwAutoUpgrade ? "true" : "false");
+          // the firmware update is needed, trigger an internet connection if disconnected
+          if (isNetworkConnected() == false)
+            requestNetworkConnection();
+          mainStateMachine.isFirstTransition = false;
+        }
+        else
+        {
+          // Enhanced logging to understand why firmware check was skipped
+          log_d("Firmware check skipped: hour=%d, min=%d, day=%d, last_check_day=%d, fwAutoUpgrade=%s",
+                timeinfo.tm_hour, timeinfo.tm_min, current_day, last_fw_check_day,
+                sysStat.fwAutoUpgrade ? "true" : "false");
+          log_i("SYS_STATE_FW_VERSION_CHECK >>>> SYS_STATE_WAIT_FOR_TIMEOUT");
+          mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
+          mainStateMachine.prev_state = SYS_STATE_FW_VERSION_CHECK;
+          mainStateMachine.isFirstTransition = true;
+          current_day = -1;
+        }
+      }
+    }
+    else
+    {
+      if ((pdTRUE == waitForNetworkEvent(NET_EVENT_CONNECTED, pdMS_TO_TICKS(5000))) || (isNetworkConnected() == true))
+      {
+        // The Firmware Update is needed, waiting for the network connection
+        if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
+        {
+          last_fw_check_day = current_day;
+          log_i("Firmware update check completed for day %d", current_day);
+          log_i("SYS_STATE_FW_VERSION_CHECK >>>> SYS_STATE_WAIT_FOR_TIMEOUT");
+        }
+        else
+        {
+          log_w("Firmware update check failed for day %d", current_day);
+        }
+      }
+      else
+      {
+        log_w("Internet connectivity ERROR!!");
+        log_w("SKIP FOTA CHECK >>>> SYS_STATE_WAIT_FOR_TIMEOUT");
+      }
+      mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
+      mainStateMachine.prev_state = SYS_STATE_FW_VERSION_CHECK;
+      mainStateMachine.isFirstTransition = true;
+      current_day = -1;
+    }
+
     break;
   }
     //------------------------------------------------------------------------------------------------------------------------
@@ -576,12 +681,6 @@ void loop()
         log_i("Timeout expired!");
         log_i("Current time: %02d:%02d:%02d", timeinfo.tm_hour, measStat.curr_minutes, measStat.curr_seconds);
 
-        // Only set first transition flag when coming from states that require reset
-        if ((mainStateMachine.prev_state == SYS_STATE_WAIT_FOR_NTP_SYNC) || (mainStateMachine.prev_state == SYS_STATE_SEND_DATA))
-        {
-          mainStateMachine.isFirstTransition = true;
-          log_i("Setting first transition flag for new measurement cycle");
-        }
         mainStateMachine.prev_state = SYS_STATE_WAIT_FOR_TIMEOUT;
         mainStateMachine.next_state = SYS_STATE_READ_SENSORS; // go to read sensors state
       }
@@ -907,6 +1006,7 @@ void loop()
         }
         break;
       }
+      break;
     }
     default:
     {
@@ -1323,56 +1423,11 @@ void loop()
     sensorData_single.pollutionData.ammonia = 0.0f;
     sensorData_single.ozoneData.ozone = 0.0f;
 
-    // Check for firmware updates after midnight data transmission
-    if (getLocalTime(&timeinfo))
-    {
-      int current_day = timeinfo.tm_yday; // Day of year (0-365)
-      static int last_fw_check_day = -1;
-
-      // Check if this is midnight hour transmission (00:xx) and we haven't checked today
-      // Allow firmware check for any minute in the midnight hour, not just 00:00
-      if ((timeinfo.tm_hour == 0) &&
-          (current_day != last_fw_check_day) && sysStat.fwAutoUpgrade)
-      {
-        log_i("Midnight hour data transmission completed (time: %02d:%02d) - triggering daily firmware update check",
-              timeinfo.tm_hour, timeinfo.tm_min);
-
-        if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
-        {
-          last_fw_check_day = current_day;
-          log_i("Firmware update check completed for day %d", current_day);
-        }
-        else
-        {
-          log_w("Firmware update check failed for day %d", current_day);
-        }
-      }
-      else
-      {
-        // Enhanced logging to understand why firmware check was skipped
-        log_d("Firmware check skipped: hour=%d, min=%d, day=%d, last_check_day=%d, fwAutoUpgrade=%s",
-              timeinfo.tm_hour, timeinfo.tm_min, current_day, last_fw_check_day,
-              sysStat.fwAutoUpgrade ? "true" : "false");
-      }
-
-      log_i("NTP SYNC CHECK - current_day:%d - last_sync_day:%d", current_day, sysData.ntp_last_sync_day);
-      // Check if daily NTP sync is needed (at 00:00:00)
-      if (((timeinfo.tm_hour == 0) && (timeinfo.tm_min == 0) && (timeinfo.tm_sec == 0)) &&
-          (current_day != sysData.ntp_last_sync_day))
-      {
-        log_i("Daily NTP sync needed - triggering time synchronization");
-        sysData.ntp_last_sync_day = current_day;
-        requestNetworkConnection(); // This will trigger NTP sync
-        mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
-        break;
-      }
-    }
-
     // After transmission, system is now aligned - next cycles will be full measurements
     log_i("Data sent successfully. System now aligned - next cycles will collect %d measurements", measStat.max_measurements);
 
     mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
-    mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT; // go to wait for timeout state
+    mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC; // go to wait for timeout state
     break;
   }
   //------------------------------------------------------------------------------------------------------------------------
