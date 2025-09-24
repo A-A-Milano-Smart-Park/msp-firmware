@@ -23,7 +23,23 @@ LIBRARIES_URLS := \
 
 # The FQBN is the core, followed by the board.
 CORE_NAME := $(shell echo $(CORE) | cut -f1 -d@)
-FQBN := $(CORE_NAME):$(BOARD):FlashMode=dio,FlashFreq=40,FlashSize=8M,PartitionScheme=default,PSRAM=disabled
+
+# Flash size configuration (can be overridden: make build FLASH_SIZE=4MB)
+ifndef FLASH_SIZE
+FLASH_SIZE := 8M
+endif
+
+# Set partition scheme based on flash size
+ifeq ($(FLASH_SIZE),4MB)
+PARTITION_SCHEME := partitions_4mb
+FQBN := $(CORE_NAME):$(BOARD):FlashMode=dio,FlashFreq=40,FlashSize=4M,PartitionScheme=partitions_4mb,PSRAM=enabled
+else ifeq ($(FLASH_SIZE),4M)
+PARTITION_SCHEME := partitions_4mb
+FQBN := $(CORE_NAME):$(BOARD):FlashMode=dio,FlashFreq=40,FlashSize=4M,PartitionScheme=partitions_4mb,PSRAM=enabled
+else
+PARTITION_SCHEME := partitions_8mb
+FQBN := $(CORE_NAME):$(BOARD):FlashMode=dio,FlashFreq=40,FlashSize=8M,PartitionScheme=partitions_8mb,PSRAM=enabled
+endif
 
 # Treat all warnings as errors.
 BUILDPROP := compiler.warning_flags.all='-Wall -Wextra'
@@ -77,10 +93,24 @@ help:
 	@echo "   env        Install the Arduino CLI environment."
 	@echo "   properties Show all build properties used instead of compiling."
 	@echo "   lint       Validate the sketch with arduino-lint."
-	@echo "   build      Compile the sketch."
+	@echo "   build      Compile the sketch (default: 8MB flash)."
 	@echo "   upload     Upload to the board."
 	@echo "   clean      Remove only files ignored by Git."
 	@echo "   clean-all  Remove all untracked files."
+	@echo
+	@echo "Flash Size Options:"
+	@echo "   make build FLASH_SIZE=4MB   Build for 4MB ESP32 (1.75MB app x2, dual OTA, no SPIFFS)"
+	@echo "   make build FLASH_SIZE=8M    Build for 8MB ESP32 (2.7MB app x2, dual OTA, rollback enabled)"
+	@echo
+	@echo "Flashing Workflow:"
+	@echo "   1. Build: make build FLASH_SIZE=4MB (or 8M)"
+	@echo "   2. Flash: ./scripts/detect-and-flash.sh (auto-copies binaries)"
+	@echo ""
+	@echo "Flashing Scripts:"
+	@echo "   ./scripts/copy-binaries.sh           Copy binaries to scripts directory"
+	@echo "   ./scripts/detect-and-flash.sh        Auto-detect and flash"
+	@echo "   ./scripts/flash-msp-firmware-4mb.sh  Flash for 4MB devices"
+	@echo "   ./scripts/flash-msp-firmware-8mb.sh  Flash for 8MB devices"
 	@echo
 
 ################################################################################
@@ -134,17 +164,37 @@ endif
 ifdef LIBRARIES_URLS
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml lib install --git-url $(LIBRARIES_URLS)
 endif
+	# Always copy custom partition tables (force update)
+	cp $(SRCDIR)/partition_tables/partitions_4mb.csv $(VARDIR)/packages/esp32/hardware/esp32/2.0.17/tools/partitions/
+	cp $(SRCDIR)/partition_tables/partitions_8mb.csv $(VARDIR)/packages/esp32/hardware/esp32/2.0.17/tools/partitions/
+	# Backup and restore boards.txt with updated partition schemes
+	@BOARDS_FILE="$(VARDIR)/packages/esp32/hardware/esp32/2.0.17/boards.txt"; \
+	BOARDS_BACKUP="$(VARDIR)/packages/esp32/hardware/esp32/2.0.17/boards.txt.backup"; \
+	if [ ! -f "$$BOARDS_BACKUP" ]; then \
+		echo "Creating backup of original boards.txt..."; \
+		cp "$$BOARDS_FILE" "$$BOARDS_BACKUP"; \
+	fi; \
+	echo "Restoring boards.txt from backup and adding custom partitions..."; \
+	cp "$$BOARDS_BACKUP" "$$BOARDS_FILE"; \
+	echo "esp32.menu.PartitionScheme.partitions_4mb=4MB OTA Dual (1.75MB APP x2/no SPIFFS)" > /tmp/custom_partitions.txt; \
+	echo "esp32.menu.PartitionScheme.partitions_4mb.build.partitions=partitions_4mb" >> /tmp/custom_partitions.txt; \
+	echo "esp32.menu.PartitionScheme.partitions_4mb.upload.maximum_size=1835008" >> /tmp/custom_partitions.txt; \
+	echo "esp32.menu.PartitionScheme.partitions_8mb=8MB OTA Dual (2.7MB APP x2/1MB SPIFFS)" >> /tmp/custom_partitions.txt; \
+	echo "esp32.menu.PartitionScheme.partitions_8mb.build.partitions=partitions_8mb" >> /tmp/custom_partitions.txt; \
+	echo "esp32.menu.PartitionScheme.partitions_8mb.upload.maximum_size=2752512" >> /tmp/custom_partitions.txt; \
+	sed -i '' '/esp32.menu.PartitionScheme.rainmaker.upload.maximum_size=3145728/r /tmp/custom_partitions.txt' "$$BOARDS_FILE"; \
+	rm /tmp/custom_partitions.txt; \
+	echo "boards.txt updated with latest partition configurations"
 
 sketch:
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml sketch new $(SRCDIR)
 
 properties:
+	mkdir -p $(BUILDDIR)
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml compile \
 	--build-path $(BUILDDIR) \
 	--build-property $(BUILDPROP) \
 	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)" $(CPP_EXTRA_FLAGS)' \
-	--build-property 'build.partitions=partitions' \
-	--build-property 'build.custom_partitions.csv=$(SRCDIR)/partitions.csv' \
 	--warnings all --log-file $(LOGDIR)/build.log --log-level debug $(ARGS_VERBOSE) \
 	--fqbn $(FQBN) $(SRCDIR) --show-properties
 
@@ -152,13 +202,12 @@ lint:
 	$(BINDIR)/arduino-lint $(SRCDIR)
 
 $(BUILDDIR)/$(SKETCH).ino.elf: $(SRCS)
+	mkdir -p $(BUILDDIR)
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml compile \
 	--build-path $(BUILDDIR) \
 	--build-property $(BUILDPROP) \
 	--build-property 'compiler.cpp.extra_flags=-DVERSION_STRING="$(VERSION_STRING)" $(CPP_EXTRA_FLAGS)' \
 	--build-property 'build.code_debug=$(CUSTOM_DEBUG_LEVEL)' \
-	--build-property 'build.partitions=partitions' \
-	--build-property 'build.custom_partitions.csv=$(SRCDIR)/partitions.csv' \
 	--warnings all --log-file $(LOGDIR)/build.log --log-level debug $(ARGS_VERBOSE) \
 	--fqbn $(FQBN) $(SRCDIR)
 
