@@ -182,7 +182,16 @@ endif
 	echo "esp32.menu.PartitionScheme.partitions_8mb=8MB OTA Dual (2.7MB APP x2/1MB SPIFFS)" >> /tmp/custom_partitions.txt; \
 	echo "esp32.menu.PartitionScheme.partitions_8mb.build.partitions=partitions_8mb" >> /tmp/custom_partitions.txt; \
 	echo "esp32.menu.PartitionScheme.partitions_8mb.upload.maximum_size=2752512" >> /tmp/custom_partitions.txt; \
-	sed -i '' '/esp32.menu.PartitionScheme.rainmaker.upload.maximum_size=3145728/r /tmp/custom_partitions.txt' "$$BOARDS_FILE"; \
+	if grep -q "esp32.menu.PartitionScheme.rainmaker.upload.maximum_size=3145728" "$$BOARDS_FILE"; then \
+		if [ "$$(uname)" = "Darwin" ]; then \
+			sed -i '' '/esp32.menu.PartitionScheme.rainmaker.upload.maximum_size=3145728/r /tmp/custom_partitions.txt' "$$BOARDS_FILE"; \
+		else \
+			sed -i '/esp32.menu.PartitionScheme.rainmaker.upload.maximum_size=3145728/r /tmp/custom_partitions.txt' "$$BOARDS_FILE"; \
+		fi; \
+	else \
+		echo "Warning: Rainmaker partition line not found, appending to end of file"; \
+		cat /tmp/custom_partitions.txt >> "$$BOARDS_FILE"; \
+	fi; \
 	rm /tmp/custom_partitions.txt; \
 	echo "boards.txt updated with latest partition configurations"
 
