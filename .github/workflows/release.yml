@@ -22,37 +22,65 @@ jobs:
         run: pip3 install pyserial
       - name: Setup Arduino CLI environment
         run: make env
-      - name: Build the sketch
-        run: make API_SECRET_SALT="${{ secrets.API_SECRET_SALT }}" API_SERVER="${{ secrets.API_SERVER }}" CUSTOM_DEBUG_LEVEL=1
+      - name: Build 4MB Flash firmware
+        run: make build API_SECRET_SALT="${{ secrets.API_SECRET_SALT }}" API_SERVER="${{ secrets.API_SERVER }}" CUSTOM_DEBUG_LEVEL=1 FLASH_SIZE=4MB
+      - name: Create build directory for 4MB binaries
+        run: mkdir -p build-4mb && cp var/build/msp-firmware.ino.* build-4mb/
+      - name: Clean build for 8MB
+        run: make clean
+      - name: Build 8MB Flash firmware
+        run: make build API_SECRET_SALT="${{ secrets.API_SECRET_SALT }}" API_SERVER="${{ secrets.API_SERVER }}" CUSTOM_DEBUG_LEVEL=1 FLASH_SIZE=8M
+      - name: Create build directory for 8MB binaries
+        run: mkdir -p build-8mb && cp var/build/msp-firmware.ino.* build-8mb/
       - name: Download external Windows flashing tool to attach to release
         run: curl -LO https://github.com/espressif/esptool/releases/download/v4.7.0/esptool-v4.7.0-win64.zip && unzip -j esptool-v4.7.0-win64.zip -d esptool-win64
       - name: Grab core version
         run: echo "CORE_VERSION=$(make print-core-version)" >> $GITHUB_ENV
-      - name: Windows zip artifact
+      - name: Windows 4MB zip artifact
         run: >
-          zip --junk-paths msp-firmware-${{ env.RELEASE_VERSION }}-win64.zip \
+          zip --junk-paths msp-firmware-FLASH4MB-${{ env.RELEASE_VERSION }}-win64.zip \
             README.md \
             scripts/runme.bat \
-            var/build/msp-firmware.ino.bin \
-            var/build/msp-firmware.ino.partitions.bin \
-            var/build/msp-firmware.ino.bootloader.bin \
+            build-4mb/msp-firmware.ino.bin \
+            build-4mb/msp-firmware.ino.partitions.bin \
+            build-4mb/msp-firmware.ino.bootloader.bin \
             var/packages/esp32/hardware/esp32/${{ env.CORE_VERSION }}/tools/partitions/boot_app0.bin \
             esptool-win64/esptool.exe
-      - name: macOS zip artifact
-        run: >            
-          zip --junk-paths msp-firmware-${{ env.RELEASE_VERSION }}-macos.zip \
+      - name: Windows 8MB zip artifact
+        run: >
+          zip --junk-paths msp-firmware-FLASH8MB-${{ env.RELEASE_VERSION }}-win64.zip \
             README.md \
-            scripts/flash-msp-firmware.sh \
+            scripts/runme-8mb.bat \
+            build-8mb/msp-firmware.ino.bin \
+            build-8mb/msp-firmware.ino.partitions.bin \
+            build-8mb/msp-firmware.ino.bootloader.bin \
+            var/packages/esp32/hardware/esp32/${{ env.CORE_VERSION }}/tools/partitions/boot_app0.bin \
+            esptool-win64/esptool.exe
+      - name: macOS 4MB zip artifact
+        run: >
+          zip --junk-paths msp-firmware-FLASH4MB-${{ env.RELEASE_VERSION }}-macos.zip \
+            README.md \
+            scripts/flash-msp-firmware-4mb.sh \
             scripts/install-pip-esptool.sh \
-            var/build/msp-firmware.ino.bin \
-            var/build/msp-firmware.ino.partitions.bin \
-            var/build/msp-firmware.ino.bootloader.bin \
+            build-4mb/msp-firmware.ino.bin \
+            build-4mb/msp-firmware.ino.partitions.bin \
+            build-4mb/msp-firmware.ino.bootloader.bin \
+            var/packages/esp32/hardware/esp32/${{ env.CORE_VERSION }}/tools/partitions/boot_app0.bin
+      - name: macOS 8MB zip artifact
+        run: >
+          zip --junk-paths msp-firmware-FLASH8MB-${{ env.RELEASE_VERSION }}-macos.zip \
+            README.md \
+            scripts/flash-msp-firmware-8mb.sh \
+            scripts/install-pip-esptool.sh \
+            build-8mb/msp-firmware.ino.bin \
+            build-8mb/msp-firmware.ino.partitions.bin \
+            build-8mb/msp-firmware.ino.bootloader.bin \
             var/packages/esp32/hardware/esp32/${{ env.CORE_VERSION }}/tools/partitions/boot_app0.bin
       - name: Create application-only bin for OTA updates
-        run: cp var/build/msp-firmware.ino.bin update_${{ env.RELEASE_VERSION }}.bin
+        run: cp build-8mb/msp-firmware.ino.bin update_${{ env.RELEASE_VERSION }}.bin
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
           name: Release ${{ env.RELEASE_VERSION }}
-          artifacts: "msp-firmware-${{ env.RELEASE_VERSION }}-win64.zip, msp-firmware-${{ env.RELEASE_VERSION }}-macos.zip, update_${{ env.RELEASE_VERSION }}.bin"
+          artifacts: "msp-firmware-FLASH4MB-${{ env.RELEASE_VERSION }}-win64.zip, msp-firmware-FLASH8MB-${{ env.RELEASE_VERSION }}-win64.zip, msp-firmware-FLASH4MB-${{ env.RELEASE_VERSION }}-macos.zip, msp-firmware-FLASH8MB-${{ env.RELEASE_VERSION }}-macos.zip, update_${{ env.RELEASE_VERSION }}.bin"
           artifactContentType: application/octet-stream
