@@ -118,7 +118,7 @@ mspStatus_t tHalSensor_checkMicsValues(sensorData_t *p_tData, sensorR0Value_t *p
 }
 
 /*********************************************************************************
- * @brief compensate gas sensor readings (specifically for NO₂ and VOCs)
+ * @brief compensate gas sensor readings (specifically for NO2 and VOCs)
  *        based on environmental conditions: temperature, pressure, and humidity.
  *        for NO2 and VOC gas compensations
  *
@@ -186,7 +186,7 @@ void vHalSensor_printMeasurementsOnSerial(send_data_t *data, sensorData_t *p_tPt
   log_i("Date&time: %s %s", locDate, locTime);
   if (p_tPtr->status.BME680Sensor)
   {
-    log_i("Temperature: %.2f°C", data->temp);
+    log_i("Temperature: %.2f C", data->temp);
     log_i("Humidity: %.2f%%", data->hum);
     log_i("Pressure: %.2f hPa", data->pre);
     log_i("VOC: %.2f kOhm", data->VOC);
@@ -305,11 +305,11 @@ void vHalSensor_performAverages(errorVars_t *p_tErr, sensorData_t *p_tData, devi
     MICS4514SensorReading_t micsReading;
     if (tHalSensor_calculateMICS4514_Gases(p_tData, &micsReading, runs) == STATUS_OK)
     {
-      // Convert PPM values to µg/m³ (same as done in main loop)
+      // Convert PPM values to ug/m3 (same as done in main loop)
       micsReading.carbonMonoxide = vGeneric_convertPpmToUgM3(micsReading.carbonMonoxide, p_tData->molarMass.carbonMonoxide);
-      log_i("MICS4514 CO converted: %.2f µg/m³", micsReading.carbonMonoxide);
+      log_i("MICS4514 CO converted: %.2f ug/m3", micsReading.carbonMonoxide);
 
-      // Convert NO2 from PPM to µg/m³ and apply environmental compensation if BME680 is available
+      // Convert NO2 from PPM to ug/m3 and apply environmental compensation if BME680 is available
       micsReading.nitrogenDioxide = vGeneric_convertPpmToUgM3(micsReading.nitrogenDioxide, p_tData->molarMass.nitrogenDioxide);
       if (p_tData->status.BME680Sensor)
       {
@@ -321,23 +321,23 @@ void vHalSensor_performAverages(errorVars_t *p_tErr, sensorData_t *p_tData, devi
         avgBmeData.volatileOrganicCompounds = p_tData->gasData.volatileOrganicCompounds / runs;
 
         micsReading.nitrogenDioxide = fHalSensor_no2AndVocCompensation(micsReading.nitrogenDioxide, &avgBmeData, p_tData);
-        log_i("MICS4514 NO2 compensated: %.2f µg/m³", micsReading.nitrogenDioxide);
+        log_i("MICS4514 NO2 compensated: %.2f ug/m3", micsReading.nitrogenDioxide);
       }
       else
       {
-        log_i("MICS4514 NO2 converted: %.2f µg/m³", micsReading.nitrogenDioxide);
+        log_i("MICS4514 NO2 converted: %.2f ug/m3", micsReading.nitrogenDioxide);
       }
 
-      // Convert NH3 from PPM to µg/m³
+      // Convert NH3 from PPM to ug/m3
       micsReading.ammonia = vGeneric_convertPpmToUgM3(micsReading.ammonia, p_tData->molarMass.ammonia);
-      log_i("MICS4514 NH3 converted: %.2f µg/m³", micsReading.ammonia);
+      log_i("MICS4514 NH3 converted: %.2f ug/m3", micsReading.ammonia);
 
       // Store final calculated values in pollution data structure
       p_tData->pollutionData.carbonMonoxide = micsReading.carbonMonoxide;
       p_tData->pollutionData.nitrogenDioxide = micsReading.nitrogenDioxide;
       p_tData->pollutionData.ammonia = micsReading.ammonia;
 
-      log_i("MICS4514 averaging complete: CO=%.2f, NO2=%.2f, NH3=%.2f µg/m³",
+      log_i("MICS4514 averaging complete: CO=%.2f, NO2=%.2f, NH3=%.2f ug/m3",
             micsReading.carbonMonoxide, micsReading.nitrogenDioxide, micsReading.ammonia);
     }
     else
@@ -570,14 +570,14 @@ mspStatus_t tHalSensor_calculateMICS4514_Immediate(DFRobot_MICS& mics4514, senso
 mspStatus_t tHalSensor_calculateGasFromRsR0(const float rs_r0_red, const float rs_r0_ox, MICS4514SensorReading_t* p_tMicsReading)
 {
   // Use datasheet-based calculations for accurate gas concentration
-  // Based on MICS4514 datasheet graphs for 25°C, 50% RH conditions
+  // Based on MICS4514 datasheet graphs for 25C, 50% RH conditions
 
   // CO calculation - RED sensor, Rs/R0 decreases with CO concentration
   // From datasheet: Rs/R0 goes from ~3.0 at 1ppm to ~0.01 at 1000ppm
   if (bGeneric_floatGreaterThan(rs_r0_red, 4.0f)) {
     p_tMicsReading->carbonMonoxide = 0.9f; // Clean air baseline
   } else {
-    // Logarithmic relationship from graph: ppm = 4.671234 × (Rs/R0)^(-1.198476)
+    // Logarithmic relationship from graph: ppm = 4.671234 * (Rs/R0)^(-1.198476)
     // Using precise data points from MICS4514 datasheet graph
     p_tMicsReading->carbonMonoxide = 4.671234f * pow(rs_r0_red, -1.198476f);
     if (p_tMicsReading->carbonMonoxide > 1000.0f) p_tMicsReading->carbonMonoxide = 1000.0f;
@@ -589,7 +589,7 @@ mspStatus_t tHalSensor_calculateGasFromRsR0(const float rs_r0_red, const float r
   if (bGeneric_floatLessThan(rs_r0_ox, 0.06f)) {
     p_tMicsReading->nitrogenDioxide = 0.0f; // Clean air baseline
   } else {
-    // Power law relationship from graph: ppm = 0.149312 × (Rs/R0)^(0.988391)
+    // Power law relationship from graph: ppm = 0.149312 * (Rs/R0)^(0.988391)
     // Using precise data points from MICS4514 datasheet graph
     p_tMicsReading->nitrogenDioxide = 0.149312f * pow(rs_r0_ox, 0.988391f);
     if (p_tMicsReading->nitrogenDioxide < 0.01f) p_tMicsReading->nitrogenDioxide = 0.0f;
@@ -601,7 +601,7 @@ mspStatus_t tHalSensor_calculateGasFromRsR0(const float rs_r0_red, const float r
   if (bGeneric_floatGreaterThan(rs_r0_red, 1.0f)) {
     p_tMicsReading->ammonia = 1.0f; // Clean air baseline
   } else {
-    // Logarithmic relationship from graph: ppm = 1.101083 × (Rs/R0)^(-3.734670)
+    // Logarithmic relationship from graph: ppm = 1.101083 * (Rs/R0)^(-3.734670)
     // Using precise data points from MICS4514 datasheet graph
     p_tMicsReading->ammonia = 1.101083f * pow(rs_r0_red, -3.734670f);
     if (p_tMicsReading->ammonia > 200.0f) p_tMicsReading->ammonia = 200.0f;

@@ -736,30 +736,54 @@ void loop()
       int next_boundary_minute;
 
       // Calculate next boundary from current minute
-      next_boundary_minute = ((measStat.curr_minutes / measStat.max_measurements) + 1) * measStat.max_measurements;
+      // If we're exactly at a boundary, move to the NEXT one
+      if ((measStat.curr_minutes % measStat.max_measurements) == 0)
+      {
+        // Currently at a boundary (e.g., minute 5 with max_measurements=5)
+        // Next boundary is one full interval away
+        next_boundary_minute = measStat.curr_minutes + measStat.max_measurements;
+      }
+      else
+      {
+        // Not at a boundary, find the next one
+        next_boundary_minute = ((measStat.curr_minutes / measStat.max_measurements) + 1) * measStat.max_measurements;
+      }
 
-      // Handle hour wraparound (when next boundary >= 60)
+      // Calculate measurements needed BEFORE handling hour wraparound
+      // This way we can calculate correctly even when next_boundary > 60
+      if (next_boundary_minute > measStat.curr_minutes)
+      {
+        // Normal case or max_measurements=60 from minute 0
+        // Examples:
+        //   - minute 3 to boundary 5: (5-3)+1 = 3 measurements
+        //   - minute 0 to boundary 60: (60-0)+1 = 61, capped to 60
+        minutes_to_next_boundary = (next_boundary_minute - measStat.curr_minutes) + 1;
+      }
+      else
+      {
+        // This should not happen with correct logic above, but handle it safely
+        minutes_to_next_boundary = measStat.max_measurements;
+      }
+
+      // Handle hour wraparound for next_boundary (for display purposes only)
       if (next_boundary_minute >= 60)
       {
         next_boundary_minute = 0; // Wrap to minute 00 of next hour
       }
 
-      // Calculate measurements needed
-      if (next_boundary_minute == 0)
+      // Special case: if we calculated more measurements than the interval allows,
+      // cap it to max_measurements (happens when starting exactly at a boundary)
+      if (minutes_to_next_boundary > measStat.max_measurements)
       {
-        // Special case: crossing hour boundary (e.g., 56->57->58->59->00)
-        minutes_to_next_boundary = (60 - measStat.curr_minutes) + 1;
-      }
-      else
-      {
-        // Normal case within the hour
-        minutes_to_next_boundary = next_boundary_minute - measStat.curr_minutes + 1;
+        minutes_to_next_boundary = measStat.max_measurements;
       }
 
       measStat.avg_measurements = minutes_to_next_boundary;
 
-      log_i("BOUNDARY CALCULATION: curr_minute=%d, max_measurements=%d, cycle_needs=%d, next_boundary=%d",
+      log_i("BOUNDARY CALCULATION: curr_minute=%d, max_measurements(interval)=%d, cycle_needs(dynamic)=%d, next_boundary=%d",
             measStat.curr_minutes, measStat.max_measurements, minutes_to_next_boundary, next_boundary_minute);
+      log_i("TIMING ALIGNMENT: Will collect %d measurements from minute %d to boundary minute %d",
+            measStat.avg_measurements, measStat.curr_minutes, next_boundary_minute);
 
       if (measStat.avg_measurements == 0)
       {
@@ -966,12 +990,12 @@ void loop()
           // This provides instant feedback for LCD while accumulating for accurate averaging
           if (tHalSensor_calculateMICS4514_Immediate(mics4514, &sensorData_accumulate, &micsLocData) == STATUS_OK)
           {
-            // Convert PPM to µg/m³ for immediate display values (same as old approach)
+            // Convert PPM to ug/m3 for immediate display values (same as old approach)
             micsLocData.carbonMonoxide = vGeneric_convertPpmToUgM3(micsLocData.carbonMonoxide, sensorData_accumulate.molarMass.carbonMonoxide);
             log_v("CO(ug/m3): %.3f", micsLocData.carbonMonoxide);
             sensorData_single.pollutionData.carbonMonoxide = micsLocData.carbonMonoxide;
 
-            // Convert NO2 from PPM to µg/m³ (with optional BME680 compensation)
+            // Convert NO2 from PPM to ug/m3 (with optional BME680 compensation)
             micsLocData.nitrogenDioxide = vGeneric_convertPpmToUgM3(micsLocData.nitrogenDioxide, sensorData_accumulate.molarMass.nitrogenDioxide);
             if (sensorData_accumulate.status.BME680Sensor)
             {
@@ -980,12 +1004,12 @@ void loop()
             log_v("NOx(ug/m3): %.3f", micsLocData.nitrogenDioxide);
             sensorData_single.pollutionData.nitrogenDioxide = micsLocData.nitrogenDioxide;
 
-            // Convert NH3 from PPM to µg/m³
+            // Convert NH3 from PPM to ug/m3
             micsLocData.ammonia = vGeneric_convertPpmToUgM3(micsLocData.ammonia, sensorData_accumulate.molarMass.ammonia);
             log_v("NH3(ug/m3): %.3f", micsLocData.ammonia);
             sensorData_single.pollutionData.ammonia = micsLocData.ammonia;
 
-            log_i("MICS4514 immediate values for display: CO=%.2f, NO2=%.2f, NH3=%.2f µg/m³",
+            log_i("MICS4514 immediate values for display: CO=%.2f, NO2=%.2f, NH3=%.2f ug/m3",
                   micsLocData.carbonMonoxide, micsLocData.nitrogenDioxide, micsLocData.ammonia);
           }
           else
@@ -1120,7 +1144,7 @@ void loop()
     measStat.measurement_count++;
     log_i("MEASUREMENT COUNT: Incremented to %d (target: %d measurements)", measStat.measurement_count, measStat.avg_measurements);
     log_i("Current minute: %d, expected transmission at boundary: %s",
-          measStat.curr_minutes, ((measStat.curr_minutes % measStat.avg_measurements) == 0) ? "YES" : "NO");
+          measStat.curr_minutes, ((measStat.curr_minutes % measStat.max_measurements) == 0) ? "YES" : "NO");
 
     log_i("Sensor values AFTER evaluation:\n");
     log_i("temp: %.2f, hum: %.2f, pre: %.2f, VOC: %.2f, PM1: %d, PM25: %d, PM10: %d, MICS_CO: %.2f, MICS_NO2: %.2f, MICS_NH3: %.2f, ozone: %.2f, MSP: %d, measurement_count: %d\n",
@@ -1178,24 +1202,42 @@ void loop()
     bool have_enough_measurements = (measStat.measurement_count >= measStat.avg_measurements);
 
     // Improved boundary logic: check if current minute is at interval boundary OR enough time has passed since last transmission
-    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.avg_measurements) == 0); // Standard interval boundary
+    // IMPORTANT: Use max_measurements (configured interval) NOT avg_measurements (dynamic cycle count)
+    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.max_measurements) == 0); // Standard interval boundary
 
     // Alternative boundary check: if enough time has passed since last transmission (handles hour rollover)
     bool enough_time_passed = false;
     if (measStat.last_transmission_minute >= 0) // Only check if we have a previous transmission
     {
       int minutes_since_last_tx;
-      if (measStat.curr_minutes >= measStat.last_transmission_minute)
+      if (measStat.curr_minutes > measStat.last_transmission_minute)
       {
-        // Same hour
+        // Same hour, minutes increased
         minutes_since_last_tx = measStat.curr_minutes - measStat.last_transmission_minute;
+      }
+      else if (measStat.curr_minutes < measStat.last_transmission_minute)
+      {
+        // Hour rollover (e.g., from minute 58 to minute 2)
+        minutes_since_last_tx = (60 - measStat.last_transmission_minute) + measStat.curr_minutes;
       }
       else
       {
-        // Hour rollover (e.g., from 58 to 2)
-        minutes_since_last_tx = (60 - measStat.last_transmission_minute) + measStat.curr_minutes;
+        // Same minute as last transmission (curr_minutes == last_transmission_minute)
+        // This can only happen if we're in a different hour
+        // For max_measurements=60, this means a full hour has passed
+        // For smaller intervals, this should not happen (we transmit and move on)
+        if (measStat.max_measurements == 60)
+        {
+          // Full hour passed (e.g., transmitted at 07:00, now at 08:00)
+          minutes_since_last_tx = 60;
+        }
+        else
+        {
+          // For smaller intervals, same minute means same transmission cycle
+          minutes_since_last_tx = 0;
+        }
       }
-      enough_time_passed = (minutes_since_last_tx >= measStat.avg_measurements);
+      enough_time_passed = (minutes_since_last_tx >= measStat.max_measurements);
     }
     else
     {
@@ -1206,28 +1248,52 @@ void loop()
     // Use either standard boundary OR enough time has passed
     at_transmission_boundary = at_transmission_boundary || enough_time_passed;
 
-    bool boundary_not_transmitted = (measStat.last_transmission_minute != measStat.curr_minutes); // Prevent duplicate transmissions at same boundary
+    // Prevent duplicate transmissions at same boundary
+    // For max_measurements=60, allow transmission if enough time passed (even if same minute)
+    bool boundary_not_transmitted;
+    if (measStat.max_measurements == 60 && measStat.curr_minutes == measStat.last_transmission_minute)
+    {
+      // For hourly transmissions, same minute means different hour if enough_time_passed is true
+      boundary_not_transmitted = enough_time_passed;
+    }
+    else
+    {
+      // For other intervals, different minute means different boundary
+      boundary_not_transmitted = (measStat.last_transmission_minute != measStat.curr_minutes);
+    }
 
     // Enhanced logging for boundary logic debugging
     int minutes_since_last_tx = 0;
     if (measStat.last_transmission_minute >= 0)
     {
-      if (measStat.curr_minutes >= measStat.last_transmission_minute)
+      if (measStat.curr_minutes > measStat.last_transmission_minute)
       {
         minutes_since_last_tx = measStat.curr_minutes - measStat.last_transmission_minute;
       }
-      else
+      else if (measStat.curr_minutes < measStat.last_transmission_minute)
       {
         minutes_since_last_tx = (60 - measStat.last_transmission_minute) + measStat.curr_minutes;
+      }
+      else
+      {
+        // Same minute - check if full hour passed for max_measurements=60
+        if (measStat.max_measurements == 60)
+        {
+          minutes_since_last_tx = 60;
+        }
+        else
+        {
+          minutes_since_last_tx = 0;
+        }
       }
     }
 
     log_i("TRANSMISSION CHECK: collected %d/%d measurements, boundary=%s (minute %d, interval=%d), last_tx_minute=%d",
           measStat.measurement_count, measStat.avg_measurements,
-          at_transmission_boundary ? "YES" : "NO", measStat.curr_minutes, measStat.avg_measurements, measStat.last_transmission_minute);
+          at_transmission_boundary ? "YES" : "NO", measStat.curr_minutes, measStat.max_measurements, measStat.last_transmission_minute);
 
     log_i("BOUNDARY DETAILS: standard_boundary=%s, enough_time_passed=%s, minutes_since_last_tx=%d",
-          ((measStat.curr_minutes % measStat.avg_measurements) == 0) ? "YES" : "NO",
+          ((measStat.curr_minutes % measStat.max_measurements) == 0) ? "YES" : "NO",
           enough_time_passed ? "YES" : "NO", minutes_since_last_tx);
 
     if (have_enough_measurements && at_transmission_boundary && boundary_not_transmitted)
@@ -1291,7 +1357,7 @@ void loop()
         sensorData_single.pollutionData.carbonMonoxide = sensorData_accumulate.pollutionData.carbonMonoxide;
         sensorData_single.pollutionData.nitrogenDioxide = sensorData_accumulate.pollutionData.nitrogenDioxide;
         sensorData_single.pollutionData.ammonia = sensorData_accumulate.pollutionData.ammonia;
-        log_i("sensorData_single updated: CO=%.2f, NO2=%.2f, NH3=%.2f µg/m³",
+        log_i("sensorData_single updated: CO=%.2f, NO2=%.2f, NH3=%.2f ug/m3",
               sensorData_single.pollutionData.carbonMonoxide,
               sensorData_single.pollutionData.nitrogenDioxide,
               sensorData_single.pollutionData.ammonia);
@@ -1606,8 +1672,16 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
 
     if (!is_valid || measStat->avg_measurements <= 0)
     {
+      if (measStat->avg_measurements <= 0)
+      {
+        log_w("Invalid avg_measurements (%d): value must be > 0. Valid values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60", measStat->avg_measurements);
+      }
+      else
+      {
+        log_w("Invalid avg_measurements (%d): must be submultiple of 60. Valid values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60", measStat->avg_measurements);
+      }
       measStat->avg_measurements = 5; // Default to 5 measurements
-      log_i("Applied default avg_measurements: %d (must be submultiple of 60)", measStat->avg_measurements);
+      log_i("Applied default avg_measurements: %d", measStat->avg_measurements);
     }
 
     // NTP configuration
@@ -1639,7 +1713,14 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
 
     if (!is_valid || measStat->avg_measurements <= 0)
     {
-      log_w("Invalid avg_measurements (%d), must be submultiple of 60. Setting to 5", measStat->avg_measurements);
+      if (measStat->avg_measurements <= 0)
+      {
+        log_w("Invalid avg_measurements (%d): value must be > 0. Valid values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60. Setting to 5", measStat->avg_measurements);
+      }
+      else
+      {
+        log_w("Invalid avg_measurements (%d): must be submultiple of 60. Valid values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60. Setting to 5", measStat->avg_measurements);
+      }
       measStat->avg_measurements = 5;
     }
 

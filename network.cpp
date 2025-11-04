@@ -1109,6 +1109,13 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
     // Build POST data string
     String postData = "X-MSP-ID=" + devInfo->deviceid;
 
+    // Add firmware version (strip 'v' prefix if present)
+    String fwVersion = String(VERSION_STRING);
+    if (fwVersion.startsWith("v")) {
+        fwVersion = fwVersion.substring(1);
+    }
+    postData += "&firmwareVersion=" + fwVersion;
+
     // Add sensor data - match original working logic by including all available data
     // BME680 data (always include if temperature is in reasonable range)
     if ((dataToSend->temp > -50.0) && (dataToSend->temp < 85.0))

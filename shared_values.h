@@ -138,9 +138,9 @@ typedef struct __MICS6814_MOLAR_MASS_VAL__
 
 typedef struct __MICS6814_DATA_
 {
-  float carbonMonoxide;  // Carbon monoxide CO 1 – 1000ppm
-  float nitrogenDioxide; // Nitrogen dioxide NO2 0.05 – 10ppm
-  float ammonia;         // Ammonia NH3 1 – 500ppm
+  float carbonMonoxide;  // Carbon monoxide CO 1 - 1000ppm
+  float nitrogenDioxide; // Nitrogen dioxide NO2 0.05 - 10ppm
+  float ammonia;         // Ammonia NH3 1 - 500ppm
 } pollutionReading;
 
 typedef struct __MICS_TUNING_DATA__
