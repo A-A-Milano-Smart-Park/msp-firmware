@@ -1476,6 +1476,18 @@ void loop()
 
     log_i("Send Time: %02d:%02d:%02d\n", sendData.sendTimeInfo.tm_hour, sendData.sendTimeInfo.tm_min, sendData.sendTimeInfo.tm_sec);
 
+    // Always log to SD card FIRST, regardless of network status
+    log_i("Writing data to SD card (mandatory logging)... SD status: %s", sysStat.sdCard ? "OK" : "FAIL");
+    if (sysStat.sdCard)
+    {
+      vHalSdcard_logToSD(&sendData, &sysData, &sysStat, &sensorData_single, &devinfo);
+      log_i("Data logged to SD card successfully with date-based folder structure");
+    }
+    else
+    {
+      log_w("SD card not available for logging - data will be lost!");
+    }
+
     // Enqueue data for transmission by network task
     if (enqueueSendData(sendData, pdMS_TO_TICKS(500)))
     {

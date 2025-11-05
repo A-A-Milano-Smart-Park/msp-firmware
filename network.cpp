@@ -1876,28 +1876,10 @@ static void networkTask(void *pvParameters)
                           networkState.timeSync, sysStatus.server_ok);
                 }
 
-                // Always log to SD card regardless of transmission status
-                log_i("Writing data to SD card (mandatory logging)... SD status: %s", sysStatus.sdCard ? "OK" : "FAIL");
-                if (sysStatus.sdCard)
-                {
-                    // Use a local sensor data structure - will be populated by the functions that need it
-                    sensorData_t localSensorData;
-                    memset(&localSensorData, 0, sizeof(sensorData_t));
-
-                    // Set default sensor status for logging
-                    // The logging function will handle sensor data based on actual values in currentData
-                    localSensorData.status.BME680Sensor = true; // Assume available if data exists
-                    localSensorData.status.PMS5003Sensor = true;
-                    localSensorData.status.MICS6814Sensor = true;
-                    localSensorData.status.O3Sensor = true;
-
-                    vHalSdcard_logToSD(&currentData, &sysData, &sysStatus, &localSensorData, &devInfo);
-                    log_i("Data logged to SD card successfully with date-based folder structure");
-                }
-                else
-                {
-                    log_w("SD card not available for logging - data will be lost!");
-                }
+                // SD card logging removed from here - data is now logged immediately after sensor reading
+                // in msp-firmware.ino before enqueueing, to ensure data is always logged regardless of
+                // network status and to prevent duplicate logging when queue is processed
+                log_i("SD card logging already completed at measurement time - skipping duplicate log");
 
                 // Print measurements to serial
                 log_d("Printing measurements to serial...");
