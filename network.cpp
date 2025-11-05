@@ -42,7 +42,7 @@
 HardwareSerial gsmSerial(1);
 
 // Task configuration - public values defined in network.h
-#define SEND_DATA_QUEUE_LENGTH 16 // Internal queue configuration
+#define SEND_DATA_QUEUE_LENGTH 512 // Internal queue configuration
 
 // Static task variables
 static StaticTask_t networkTaskBuffer;
@@ -804,11 +804,9 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
     log_i("Synchronizing date and time...");
     updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_RETREIVE_DATETIME);
 
-    // Configure timezone
+    // Get timezone rule (will be used by configTzTime later)
     String tzRule = (sysData->timezone.length() > 0) ? sysData->timezone : TZ_DEFAULT;
-    log_i("Setting timezone: %s", tzRule.c_str());
-    setenv("TZ", tzRule.c_str(), 1);
-    tzset();
+    log_i("Using timezone: %s", tzRule.c_str());
 
 #ifdef FAKE_NTP_TIME
     // Fake NTP sync for testing
@@ -942,9 +940,12 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
         }
         else if (networkState.wifiConnected)
         {
-            // Use WiFi NTP sync
+            // Use WiFi NTP sync with proper timezone handling
             log_i("Syncing time via WiFi NTP...");
-            configTime(0, 0, ntpServer.c_str());
+
+            // Use configTzTime instead of configTime to properly handle timezone
+            // This prevents timezone conflicts that cause permanent time offset
+            configTzTime(tzRule.c_str(), ntpServer.c_str());
 
             // Wait for time sync with timeout
             unsigned long syncStart = millis();
@@ -1215,7 +1216,7 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
 
             log_i("Waiting for server response (timeout: %d ms)...", SERVER_RESPONSE_TIMEOUT_MS);
 
-            // Wait for initial response or timeout
+            // Wait for response and read until no more data or timeout
             while (millis() - responseStart < SERVER_RESPONSE_TIMEOUT_MS)
             {
                 if (sslClient->available())
@@ -1224,18 +1225,33 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
                     char c = sslClient->read();
                     response += c;
 
-                    // If we've read the HTTP headers (double CRLF), we can analyze the response
+                    // Mark when we've read the HTTP headers
                     if (!headerCompleted && response.indexOf("\r\n\r\n") >= 0)
                     {
                         headerCompleted = true;
                         log_i("HTTP headers received after %lu ms", millis() - responseStart);
-                        break;
+                        // Don't break - continue reading body!
                     }
                 }
                 else
                 {
-                    // No data available yet, wait a bit
-                    delay(10);
+                    // No data available - check if we got headers and should wait for body
+                    if (headerCompleted)
+                    {
+                        // Give a short grace period for body data to arrive
+                        delay(50);
+                        // Check again
+                        if (!sslClient->available())
+                        {
+                            // No more data coming, we're done
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        // Still waiting for headers
+                        delay(10);
+                    }
                 }
             }
 
@@ -1251,14 +1267,34 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
 
             if (response.length() > 0)
             {
-                log_i("  - Response preview (first 200 chars): %s", response.substring(0, 200).c_str());
-
                 // Extract status line for detailed logging
                 int statusLineEnd = response.indexOf('\r');
                 if (statusLineEnd > 0)
                 {
                     String statusLine = response.substring(0, statusLineEnd);
                     log_i("  - Status line: %s", statusLine.c_str());
+                }
+
+                // Extract and print the response body (after headers)
+                int bodyStart = response.indexOf("\r\n\r\n");
+                if (bodyStart >= 0 && (bodyStart + 4) < response.length())
+                {
+                    String body = response.substring(bodyStart + 4);
+                    log_i("  - Response body (%d bytes):", body.length());
+
+                    // Print body in chunks to avoid log truncation
+                    // ESP32 log buffer is typically ~256 bytes, so split if needed
+                    int chunk_size = 200;
+                    for (int i = 0; i < body.length(); i += chunk_size)
+                    {
+                        int end = min(i + chunk_size, (int)body.length());
+                        log_i("    %s", body.substring(i, end).c_str());
+                    }
+                }
+                else
+                {
+                    // Fallback: print first part of response if body not found
+                    log_i("  - Response preview (first 300 chars): %s", response.substring(0, 300).c_str());
                 }
             }
             else
@@ -1271,6 +1307,20 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
             {
                 log_i("SUCCESS: Data uploaded successfully! Status: %s",
                       response.substring(0, response.indexOf('\r')).c_str());
+
+                // Extract and store server configuration response
+                int bodyStart = response.indexOf("\r\n\r\n");
+                if (bodyStart >= 0 && (bodyStart + 4) < response.length())
+                {
+                    String body = response.substring(bodyStart + 4);
+                    if (body.length() > 0)
+                    {
+                        log_i("Storing server configuration response (%d bytes)", body.length());
+                        sysData->server_config_response = body;
+                        sysData->server_config_received = true;
+                    }
+                }
+
                 sysData->sent_ok = true;
                 sendNetworkEvent(NET_EVENT_DATA_SENT);
                 return true;

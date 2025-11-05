@@ -584,6 +584,376 @@ uint8_t checkConfig(const char *configpath, deviceNetworkInfo_t *p_tDev, sensorD
   }
 }
 
+/*******************************************************************************
+ * @brief Write current system configuration to SD card config file
+ *
+ * This function writes the current system structures to config_v4.json.
+ * It creates the JSON structure from system memory and writes to SD card.
+ *
+ * @param p_tDev device network info structure
+ * @param p_tData sensor data structure
+ * @param pDev device measurement structure
+ * @param p_tSys system status structure
+ * @param p_tSysData system data structure
+ * @return bool true if write successful, false otherwise
+ ******************************************************************************/
+bool bHalSdcard_writeConfig(deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, deviceMeasurement_t *pDev, systemStatus_t *p_tSys, systemData_t *p_tSysData)
+{
+  log_i("Writing system configuration to SD card...");
+
+  // Check if SD card is available
+  if (p_tSys->sdCard != STATUS_OK)
+  {
+    log_e("SD card not available!");
+    return false;
+  }
+
+  // Read existing config to preserve help section
+  File config_file = SD.open(CONFIG_PATH, FILE_READ);
+  JsonDocument doc;
+  JsonObject help;
+
+  if (config_file)
+  {
+    // Try to read existing help section
+    String existing_json = config_file.readString();
+    config_file.close();
+
+    JsonDocument existing_doc;
+    DeserializationError error = deserializeJson(existing_doc, existing_json);
+    if (!error && existing_doc[JSON_HELP_SECTION].is<JsonObject>())
+    {
+      // Preserve existing help section
+      help = doc[JSON_HELP_SECTION].to<JsonObject>();
+      JsonObject existing_help = existing_doc[JSON_HELP_SECTION];
+      for (JsonPair kv : existing_help)
+      {
+        help[kv.key()] = kv.value();
+      }
+    }
+  }
+
+  // Create config section from system structures
+  JsonObject config = doc[JSON_CONFIG_SECTION].to<JsonObject>();
+
+  // Network configuration
+  config[JSON_KEY_SSID] = p_tDev->ssid;
+  config[JSON_KEY_PASSWORD] = p_tDev->passw;
+  config[JSON_KEY_DEVICE_ID] = p_tDev->deviceid;
+
+  // WiFi power - convert from wifi_power_t enum back to string
+  String wifiPowerStr;
+  switch (p_tDev->wifipow)
+  {
+    case WIFI_POWER_MINUS_1dBm: wifiPowerStr = "-1dBm"; break;
+    case WIFI_POWER_2dBm: wifiPowerStr = "2dBm"; break;
+    case WIFI_POWER_5dBm: wifiPowerStr = "5dBm"; break;
+    case WIFI_POWER_7dBm: wifiPowerStr = "7dBm"; break;
+    case WIFI_POWER_8_5dBm: wifiPowerStr = "8.5dBm"; break;
+    case WIFI_POWER_11dBm: wifiPowerStr = "11dBm"; break;
+    case WIFI_POWER_13dBm: wifiPowerStr = "13dBm"; break;
+    case WIFI_POWER_15dBm: wifiPowerStr = "15dBm"; break;
+    case WIFI_POWER_17dBm: wifiPowerStr = "17dBm"; break;
+    case WIFI_POWER_18_5dBm: wifiPowerStr = "18.5dBm"; break;
+    case WIFI_POWER_19dBm: wifiPowerStr = "19dBm"; break;
+    case WIFI_POWER_19_5dBm: wifiPowerStr = "19.5dBm"; break;
+    default: wifiPowerStr = "17dBm"; break;
+  }
+  config[JSON_KEY_WIFI_POWER] = wifiPowerStr;
+
+  // Sensor configuration
+  config[JSON_KEY_O3_ZERO_VALUE] = p_tData->ozoneData.o3ZeroOffset;
+  config[JSON_KEY_AVERAGE_MEASUREMENTS] = pDev->avg_measurements;
+  config[JSON_KEY_AVERAGE_DELAY_SECONDS] = pDev->avg_delay;
+  config[JSON_KEY_SEA_LEVEL_ALTITUDE] = p_tData->gasData.seaLevelAltitude;
+  config[JSON_KEY_UPLOAD_SERVER] = p_tSysData->server;
+
+  // MICS calibration values
+  JsonObject micsCalib = config[JSON_KEY_MICS_CALIBRATION_VALUES].to<JsonObject>();
+  micsCalib[JSON_KEY_MICS_RED] = p_tData->micsTuningData.sensingResInAir.redSensor;
+  micsCalib[JSON_KEY_MICS_OX] = p_tData->micsTuningData.sensingResInAir.oxSensor;
+  micsCalib[JSON_KEY_MICS_NH3] = p_tData->micsTuningData.sensingResInAir.nh3Sensor;
+
+  // MICS measurement offsets
+  JsonObject micsOffset = config[JSON_KEY_MICS_MEASUREMENTS_OFFSETS].to<JsonObject>();
+  micsOffset[JSON_KEY_MICS_RED] = p_tData->micsTuningData.sensingResInAirOffset.redSensor;
+  micsOffset[JSON_KEY_MICS_OX] = p_tData->micsTuningData.sensingResInAirOffset.oxSensor;
+  micsOffset[JSON_KEY_MICS_NH3] = p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor;
+
+  // Compensation factors
+  JsonObject compFactors = config[JSON_KEY_COMPENSATION_FACTORS].to<JsonObject>();
+  compFactors[JSON_KEY_COMP_H] = p_tData->compParams.currentHumidity;
+  compFactors[JSON_KEY_COMP_T] = p_tData->compParams.currentTemperature;
+  compFactors[JSON_KEY_COMP_P] = p_tData->compParams.currentPressure;
+
+  // Modem configuration
+  config[JSON_KEY_USE_MODEM] = (p_tSys->use_modem != 0);
+  config[JSON_KEY_MODEM_APN] = p_tDev->apn;
+
+  // Time configuration
+  config[JSON_KEY_NTP_SERVER] = p_tSysData->ntp_server;
+  config[JSON_KEY_TIMEZONE] = p_tSysData->timezone;
+
+  // System configuration
+  config[JSON_KEY_FW_AUTO_UPGRADE] = (p_tSys->fwAutoUpgrade != 0);
+  config[JSON_KEY_GAS_SENSOR_TYPE] = p_tSys->gasSensorType;
+
+  // Create default help section if it doesn't exist
+  if (!help)
+  {
+    help = doc[JSON_HELP_SECTION].to<JsonObject>();
+    help[JSON_KEY_WIFI_POWER] = "Accepted values: -1, 2, 5, 7, 8.5, 11, 13, 15, 17, 18.5, 19, 19.5 dBm";
+    help[JSON_KEY_AVERAGE_MEASUREMENTS] = "Accepted values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60";
+    help[JSON_KEY_SEA_LEVEL_ALTITUDE] = "Value in meters, must be changed according to device location. 122.0 meters is the average altitude in Milan, Italy";
+    help[JSON_KEY_TIMEZONE] = "Standard tz timezone definition. More details at https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html";
+    help[JSON_KEY_GAS_SENSOR_TYPE] = "Gas sensor type: 0 = MICS6814, 1 = MICS4514 (DFRobot SEN0377)";
+  }
+
+  // Write config to SD card
+  config_file = SD.open(CONFIG_PATH, FILE_WRITE);
+  if (!config_file)
+  {
+    log_e("Failed to open config file for writing!");
+    return false;
+  }
+
+  // Serialize and write JSON to file
+  if (serializeJsonPretty(doc, config_file) == 0)
+  {
+    log_e("Failed to write JSON to config file!");
+    config_file.close();
+    return false;
+  }
+
+  config_file.close();
+  log_i("Configuration file written successfully!");
+
+  return true;
+}
+
+/*******************************************************************************
+ * @brief Update system structures from server JSON response
+ *
+ * This function parses the server configuration JSON and updates the system
+ * structures accordingly. Fields not present in the server response are left
+ * unchanged in the system structures.
+ *
+ * @param server_json JSON string from server with configuration updates
+ * @param p_tDev device network info structure
+ * @param p_tData sensor data structure
+ * @param pDev device measurement structure
+ * @param p_tSys system status structure
+ * @param p_tSysData system data structure
+ * @return bool true if update successful, false otherwise
+ ******************************************************************************/
+bool bHalSdcard_updateFromServerConfig(const String &server_json, deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, deviceMeasurement_t *pDev, systemStatus_t *p_tSys, systemData_t *p_tSysData)
+{
+  log_i("Updating system structures from server configuration...");
+
+  // Parse server response
+  JsonDocument server_doc;
+  DeserializationError error = deserializeJson(server_doc, server_json);
+  if (error)
+  {
+    log_e("Failed to parse server JSON: %s", error.c_str());
+    return false;
+  }
+
+  bool config_updated = false;
+
+  // Update network configuration
+  if (!server_doc["ssid"].isNull())
+  {
+    p_tDev->ssid = server_doc["ssid"].as<String>();
+    log_i("Updated SSID from server");
+    config_updated = true;
+  }
+
+  if (!server_doc["password"].isNull())
+  {
+    p_tDev->passw = server_doc["password"].as<String>();
+    log_i("Updated password from server");
+    config_updated = true;
+  }
+
+  if (!server_doc["wifi_power"].isNull())
+  {
+    String wifiPowerStr = server_doc["wifi_power"].as<String>();
+    // Convert string to wifi_power_t enum
+    if (wifiPowerStr == "-1dBm") p_tDev->wifipow = WIFI_POWER_MINUS_1dBm;
+    else if (wifiPowerStr == "2dBm") p_tDev->wifipow = WIFI_POWER_2dBm;
+    else if (wifiPowerStr == "5dBm") p_tDev->wifipow = WIFI_POWER_5dBm;
+    else if (wifiPowerStr == "7dBm") p_tDev->wifipow = WIFI_POWER_7dBm;
+    else if (wifiPowerStr == "8.5dBm") p_tDev->wifipow = WIFI_POWER_8_5dBm;
+    else if (wifiPowerStr == "11dBm") p_tDev->wifipow = WIFI_POWER_11dBm;
+    else if (wifiPowerStr == "13dBm") p_tDev->wifipow = WIFI_POWER_13dBm;
+    else if (wifiPowerStr == "15dBm") p_tDev->wifipow = WIFI_POWER_15dBm;
+    else if (wifiPowerStr == "17dBm") p_tDev->wifipow = WIFI_POWER_17dBm;
+    else if (wifiPowerStr == "18.5dBm") p_tDev->wifipow = WIFI_POWER_18_5dBm;
+    else if (wifiPowerStr == "19dBm") p_tDev->wifipow = WIFI_POWER_19dBm;
+    else if (wifiPowerStr == "19.5dBm") p_tDev->wifipow = WIFI_POWER_19_5dBm;
+    log_i("Updated wifi_power: %s", wifiPowerStr.c_str());
+    config_updated = true;
+  }
+
+  // Update sensor configuration
+  if (!server_doc["o3_zero_value"].isNull())
+  {
+    p_tData->ozoneData.o3ZeroOffset = server_doc["o3_zero_value"].as<int>();
+    log_i("Updated o3_zero_value: %d", p_tData->ozoneData.o3ZeroOffset);
+    config_updated = true;
+  }
+
+  if (!server_doc["average_measurements"].isNull())
+  {
+    pDev->avg_measurements = server_doc["average_measurements"].as<int>();
+    log_i("Updated average_measurements: %d", pDev->avg_measurements);
+    config_updated = true;
+  }
+
+  if (!server_doc["average_delay_seconds"].isNull())
+  {
+    pDev->avg_delay = server_doc["average_delay_seconds"].as<int>();
+    log_i("Updated average_delay_seconds: %d", pDev->avg_delay);
+    config_updated = true;
+  }
+
+  if (!server_doc["sea_level_altitude"].isNull())
+  {
+    p_tData->gasData.seaLevelAltitude = server_doc["sea_level_altitude"].as<float>();
+    log_i("Updated sea_level_altitude: %.2f", p_tData->gasData.seaLevelAltitude);
+    config_updated = true;
+  }
+
+  if (!server_doc["upload_server"].isNull())
+  {
+    p_tSysData->server = server_doc["upload_server"].as<String>();
+    log_i("Updated upload_server from server");
+    config_updated = true;
+  }
+
+  // Update MICS calibration values
+  if (!server_doc["mics_calibration_red"].isNull())
+  {
+    p_tData->micsTuningData.sensingResInAir.redSensor = server_doc["mics_calibration_red"].as<uint16_t>();
+    log_i("Updated mics_calibration_red: %d", p_tData->micsTuningData.sensingResInAir.redSensor);
+    config_updated = true;
+  }
+
+  if (!server_doc["mics_calibration_ox"].isNull())
+  {
+    p_tData->micsTuningData.sensingResInAir.oxSensor = server_doc["mics_calibration_ox"].as<uint16_t>();
+    log_i("Updated mics_calibration_ox: %d", p_tData->micsTuningData.sensingResInAir.oxSensor);
+    config_updated = true;
+  }
+
+  if (!server_doc["mics_calibration_nh3"].isNull())
+  {
+    p_tData->micsTuningData.sensingResInAir.nh3Sensor = server_doc["mics_calibration_nh3"].as<uint16_t>();
+    log_i("Updated mics_calibration_nh3: %d", p_tData->micsTuningData.sensingResInAir.nh3Sensor);
+    config_updated = true;
+  }
+
+  // Update MICS offset values
+  if (!server_doc["mics_offset_red"].isNull())
+  {
+    p_tData->micsTuningData.sensingResInAirOffset.redSensor = server_doc["mics_offset_red"].as<int16_t>();
+    log_i("Updated mics_offset_red: %d", p_tData->micsTuningData.sensingResInAirOffset.redSensor);
+    config_updated = true;
+  }
+
+  if (!server_doc["mics_offset_ox"].isNull())
+  {
+    p_tData->micsTuningData.sensingResInAirOffset.oxSensor = server_doc["mics_offset_ox"].as<int16_t>();
+    log_i("Updated mics_offset_ox: %d", p_tData->micsTuningData.sensingResInAirOffset.oxSensor);
+    config_updated = true;
+  }
+
+  if (!server_doc["mics_offset_nh3"].isNull())
+  {
+    p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor = server_doc["mics_offset_nh3"].as<int16_t>();
+    log_i("Updated mics_offset_nh3: %d", p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor);
+    config_updated = true;
+  }
+
+  // Update compensation factors
+  if (!server_doc["comp_h"].isNull())
+  {
+    p_tData->compParams.currentHumidity = server_doc["comp_h"].as<float>();
+    log_i("Updated comp_h: %.2f", p_tData->compParams.currentHumidity);
+    config_updated = true;
+  }
+
+  if (!server_doc["comp_t"].isNull())
+  {
+    p_tData->compParams.currentTemperature = server_doc["comp_t"].as<float>();
+    log_i("Updated comp_t: %.2f", p_tData->compParams.currentTemperature);
+    config_updated = true;
+  }
+
+  if (!server_doc["comp_p"].isNull())
+  {
+    p_tData->compParams.currentPressure = server_doc["comp_p"].as<float>();
+    log_i("Updated comp_p: %.2f", p_tData->compParams.currentPressure);
+    config_updated = true;
+  }
+
+  // Update modem configuration
+  if (!server_doc["use_modem"].isNull())
+  {
+    p_tSys->use_modem = server_doc["use_modem"].as<bool>() ? 1 : 0;
+    log_i("Updated use_modem: %s", p_tSys->use_modem ? "true" : "false");
+    config_updated = true;
+  }
+
+  if (!server_doc["modem_apn"].isNull())
+  {
+    p_tDev->apn = server_doc["modem_apn"].as<String>();
+    log_i("Updated modem_apn from server");
+    config_updated = true;
+  }
+
+  // Update time configuration
+  if (!server_doc["ntp_server"].isNull())
+  {
+    p_tSysData->ntp_server = server_doc["ntp_server"].as<String>();
+    log_i("Updated ntp_server: %s", p_tSysData->ntp_server.c_str());
+    config_updated = true;
+  }
+
+  if (!server_doc["timezone"].isNull())
+  {
+    p_tSysData->timezone = server_doc["timezone"].as<String>();
+    log_i("Updated timezone: %s", p_tSysData->timezone.c_str());
+    config_updated = true;
+  }
+
+  // Update system configuration
+  if (!server_doc["fw_auto_upgrade"].isNull())
+  {
+    p_tSys->fwAutoUpgrade = server_doc["fw_auto_upgrade"].as<bool>() ? 1 : 0;
+    log_i("Updated fw_auto_upgrade: %s", p_tSys->fwAutoUpgrade ? "true" : "false");
+    config_updated = true;
+  }
+
+  if (!server_doc["gas_sensor_type"].isNull())
+  {
+    p_tSys->gasSensorType = server_doc["gas_sensor_type"].as<uint8_t>();
+    log_i("Updated gas_sensor_type: %d (%s)", p_tSys->gasSensorType,
+          (p_tSys->gasSensorType == 0) ? "MICS6814" : (p_tSys->gasSensorType == 1) ? "MICS4514" : "Unknown");
+    config_updated = true;
+  }
+
+  if (!config_updated)
+  {
+    log_i("No configuration changes received from server");
+    return true;
+  }
+
+  log_i("System structures updated successfully from server configuration!");
+  return true;
+}
+
 // Legacy uHalSdcard_checkLogFile function removed - now using date-based logging with automatic file creation
 
 /****************************************************************************

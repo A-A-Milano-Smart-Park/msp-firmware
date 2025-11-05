@@ -82,6 +82,31 @@ uint8_t initializeSD(systemStatus_t *p_tSys, deviceNetworkInfo_t *p_tDev);
 uint8_t checkConfig(const char *configpath, deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, deviceMeasurement_t *pDev, systemStatus_t *p_tSys, systemData_t *p_tSysData);
 
 /********************************************************
+ * @brief Update system structures from server JSON response
+ *
+ * @param server_json JSON string from server with configuration updates
+ * @param p_tDev device network info structure
+ * @param p_tData sensor data structure
+ * @param pDev device measurement structure
+ * @param p_tSys system status structure
+ * @param p_tSysData system data structure
+ * @return bool success/failure
+ ********************************************************/
+bool bHalSdcard_updateFromServerConfig(const String &server_json, deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, deviceMeasurement_t *pDev, systemStatus_t *p_tSys, systemData_t *p_tSysData);
+
+/********************************************************
+ * @brief Write current system configuration to SD card config file
+ *
+ * @param p_tDev device network info structure
+ * @param p_tData sensor data structure
+ * @param pDev device measurement structure
+ * @param p_tSys system status structure
+ * @param p_tSysData system data structure
+ * @return bool success/failure
+ ********************************************************/
+bool bHalSdcard_writeConfig(deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, deviceMeasurement_t *pDev, systemStatus_t *p_tSys, systemData_t *p_tSysData);
+
+/********************************************************
  * @brief periodic SD card presence check
  * 
  * @param p_tSys system status structure

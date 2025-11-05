@@ -49,6 +49,7 @@ typedef struct __STATE_MACHINE__
 
 typedef enum __SYSTEM_STATES__
 {
+  SYS_STATE_UPDATE_CONFIG_FROM_SERVER,
   SYS_STATE_WAIT_FOR_NTP_SYNC,
   SYS_STATE_FW_VERSION_CHECK,
   SYS_STATE_WAIT_FOR_TIMEOUT,
@@ -283,6 +284,8 @@ typedef struct __SYSTEMDATA_T__
   char Date[DATE_LEN];
   char Time[TIME_LEN];
   int ntp_last_sync_day; // Day of year (0-365) when NTP was last synced
+  String server_config_response; // JSON response from server with configuration
+  bool server_config_received; // Flag indicating new config available from server
 } systemData_t;
 
 typedef struct __SEND_DATA__

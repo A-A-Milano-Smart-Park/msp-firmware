@@ -444,6 +444,8 @@ void setup()
 
   sysData.sent_ok = false;
   sysData.ntp_last_sync_day = -1; // Force initial NTP sync
+  sysData.server_config_received = false; // No server config yet
+  sysData.server_config_response = ""; // Empty config response
 
   memset(sysData.Date, 0, sizeof(sysData.Date));
   memset(sysData.Time, 0, sizeof(sysData.Time));
@@ -457,8 +459,8 @@ void setup()
   if ((sysStat.configuration == true) || (sysStat.server_ok == true))
   {
     log_i("Configuration available, requesting network connection...");
-    mainStateMachine.current_state = SYS_STATE_WAIT_FOR_NTP_SYNC; // Wait for NTP sync first
-    mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+    mainStateMachine.current_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER; // Check for server config first
+    mainStateMachine.next_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER;
     vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_NETWORK_CONN, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
   }
   else
@@ -486,6 +488,56 @@ void loop()
 {
   switch (mainStateMachine.current_state) // state machine for the main loop
   {
+  case SYS_STATE_UPDATE_CONFIG_FROM_SERVER:
+  {
+    log_i("Checking for server configuration updates...");
+
+    if (sysData.server_config_received == true)
+    {
+      log_i("Server configuration received, updating system structures...");
+
+      // Step 1: Parse server JSON and update system structures
+      if (bHalSdcard_updateFromServerConfig(sysData.server_config_response, &devinfo, &sensorData_accumulate, &measStat, &sysStat, &sysData))
+      {
+        log_i("System structures updated successfully from server");
+
+        // Update max_measurements to match the new avg_measurements from server
+        measStat.max_measurements = measStat.avg_measurements;
+        log_i("Updated max_measurements to %d for hourly boundary alignment", measStat.max_measurements);
+
+        // Step 2: Write updated system structures to config_v4.json
+        if (bHalSdcard_writeConfig(&devinfo, &sensorData_accumulate, &measStat, &sysStat, &sysData))
+        {
+          log_i("Configuration file written successfully to SD card");
+        }
+        else
+        {
+          log_e("Failed to write configuration file to SD card");
+        }
+      }
+      else
+      {
+        log_e("Failed to update system structures from server response");
+      }
+
+      // Clear the flag after processing
+      sysData.server_config_received = false;
+      sysData.server_config_response = "";
+
+      log_i("Configuration update processing complete");
+    }
+    else
+    {
+      log_i("No new server configuration to process");
+    }
+
+    // Always proceed to NTP sync after config check
+    mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
+    mainStateMachine.isFirstTransition = true;
+    mainStateMachine.prev_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER;
+    break;
+  }
+  //------------------------------------------------------------------------------------------------------------------------
   case SYS_STATE_WAIT_FOR_NTP_SYNC:
   {
     log_i("Waiting for NTP synchronization...");
@@ -1493,7 +1545,7 @@ void loop()
     log_i("Data sent successfully. System now aligned - next cycles will collect %d measurements", measStat.max_measurements);
 
     mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
-    mainStateMachine.next_state = SYS_STATE_WAIT_FOR_NTP_SYNC; // go to wait for timeout state
+    mainStateMachine.next_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER; // Check for server config updates
     break;
   }
   //------------------------------------------------------------------------------------------------------------------------
