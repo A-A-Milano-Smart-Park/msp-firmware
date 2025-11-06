@@ -98,6 +98,14 @@ bool enqueueSendData(const send_data_t &data, TickType_t ticksToWait);
  */
 bool dequeueSendData(send_data_t *data, TickType_t ticksToWait);
 
+/**
+ * @brief Check if server configuration is available from network task
+ * @param config Pointer to store the configuration message
+ * @param ticksToWait Maximum time to wait if queue is empty (0 for non-blocking)
+ * @return true if config was available and retrieved, false otherwise
+ */
+bool dequeueServerConfig(server_config_msg_t *config, TickType_t ticksToWait);
+
 // ===== Event Management =====
 
 /**

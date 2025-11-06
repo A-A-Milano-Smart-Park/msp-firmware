@@ -490,45 +490,64 @@ void loop()
   {
   case SYS_STATE_UPDATE_CONFIG_FROM_SERVER:
   {
-    log_i("Checking for server configuration updates...");
+    log_i("Checking for server configuration updates from network task...");
+    log_i("SD Card status: %s", sysStat.sdCard ? "OK" : "FAIL");
 
-    if (sysData.server_config_received == true)
+    // Check queue for server config (non-blocking)
+    server_config_msg_t configMsg;
+    if (dequeueServerConfig(&configMsg, 0))
     {
-      log_i("Server configuration received, updating system structures...");
-
-      // Step 1: Parse server JSON and update system structures
-      if (bHalSdcard_updateFromServerConfig(sysData.server_config_response, &devinfo, &sensorData_accumulate, &measStat, &sysStat, &sysData))
+      if (configMsg.valid && configMsg.response_length > 0)
       {
-        log_i("System structures updated successfully from server");
+        log_i("=== SERVER CONFIGURATION RECEIVED FROM NETWORK TASK ===");
+        log_i("Config response length: %d bytes", configMsg.response_length);
+        log_i("Server config JSON: %s", configMsg.json_response);
 
-        // Update max_measurements to match the new avg_measurements from server
-        measStat.max_measurements = measStat.avg_measurements;
-        log_i("Updated max_measurements to %d for hourly boundary alignment", measStat.max_measurements);
+        // Convert to String for processing
+        String configJson = String(configMsg.json_response);
 
-        // Step 2: Write updated system structures to config_v4.json
-        if (bHalSdcard_writeConfig(&devinfo, &sensorData_accumulate, &measStat, &sysStat, &sysData))
+        // Step 1: Parse server JSON and update system structures
+        if (bHalSdcard_updateFromServerConfig(configJson, &devinfo, &sensorData_accumulate, &measStat, &sysStat, &sysData))
         {
-          log_i("Configuration file written successfully to SD card");
+          log_i("System structures updated successfully from server");
+
+          // Update max_measurements to match the new avg_measurements from server
+          measStat.max_measurements = measStat.avg_measurements;
+          log_i("Updated max_measurements to %d for hourly boundary alignment", measStat.max_measurements);
+
+          // Step 2: Write updated system structures to config_v4.json
+          log_i("Attempting to write configuration to SD card...");
+          log_i("Pre-write SD Card status check: %s", sysStat.sdCard ? "OK" : "FAIL");
+
+          if (bHalSdcard_writeConfig(&devinfo, &sensorData_accumulate, &measStat, &sysStat, &sysData))
+          {
+            log_i("=== Configuration file written successfully to SD card ===");
+            log_i("config_v4.json has been updated with server values");
+          }
+          else
+          {
+            log_e("=== FAILED to write configuration file to SD card ===");
+            log_e("SD Card status: %s", sysStat.sdCard ? "OK" : "FAIL");
+            log_e("Please check SD card availability and write permissions");
+            log_w("Config applied to RAM but NOT saved to SD card");
+          }
         }
         else
         {
-          log_e("Failed to write configuration file to SD card");
+          log_e("Failed to update system structures from server response");
+          log_e("Check server JSON format and field names");
         }
+
+        log_i("Configuration update processing complete");
       }
       else
       {
-        log_e("Failed to update system structures from server response");
+        log_w("Received invalid server config message from queue");
       }
-
-      // Clear the flag after processing
-      sysData.server_config_received = false;
-      sysData.server_config_response = "";
-
-      log_i("Configuration update processing complete");
     }
     else
     {
-      log_i("No new server configuration to process");
+      log_i("No new server configuration available from network task");
     }
 
     // Always proceed to NTP sync after config check
@@ -1554,10 +1573,11 @@ void loop()
     sensorData_single.ozoneData.ozone = 0.0f;
 
     // After transmission, system is now aligned - next cycles will be full measurements
-    log_i("Data sent successfully. System now aligned - next cycles will collect %d measurements", measStat.max_measurements);
+    log_i("Data enqueued successfully. System now aligned - next cycles will collect %d measurements", measStat.max_measurements);
+    log_i("Note: Server config from this transmission will be applied in next cycle");
 
     mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
-    mainStateMachine.next_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER; // Check for server config updates
+    mainStateMachine.next_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER; // Check for server config from PREVIOUS transmission
     break;
   }
   //------------------------------------------------------------------------------------------------------------------------

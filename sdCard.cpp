@@ -748,7 +748,7 @@ bool bHalSdcard_writeConfig(deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, 
  ******************************************************************************/
 bool bHalSdcard_updateFromServerConfig(const String &server_json, deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, deviceMeasurement_t *pDev, systemStatus_t *p_tSys, systemData_t *p_tSysData)
 {
-  log_i("Updating system structures from server configuration...");
+  log_i("Updating system structures from server configuration with validation...");
 
   // Parse server response
   JsonDocument server_doc;
@@ -760,193 +760,232 @@ bool bHalSdcard_updateFromServerConfig(const String &server_json, deviceNetworkI
   }
 
   bool config_updated = false;
+  int fields_validated = 0;
+  int fields_rejected = 0;
 
-  // Update network configuration
-  if (!server_doc["ssid"].isNull())
-  {
-    p_tDev->ssid = server_doc["ssid"].as<String>();
-    log_i("Updated SSID from server");
-    config_updated = true;
-  }
+  // ===== SENSOR CONFIGURATION =====
 
-  if (!server_doc["password"].isNull())
-  {
-    p_tDev->passw = server_doc["password"].as<String>();
-    log_i("Updated password from server");
-    config_updated = true;
-  }
-
-  if (!server_doc["wifi_power"].isNull())
-  {
-    String wifiPowerStr = server_doc["wifi_power"].as<String>();
-    // Convert string to wifi_power_t enum
-    if (wifiPowerStr == "-1dBm") p_tDev->wifipow = WIFI_POWER_MINUS_1dBm;
-    else if (wifiPowerStr == "2dBm") p_tDev->wifipow = WIFI_POWER_2dBm;
-    else if (wifiPowerStr == "5dBm") p_tDev->wifipow = WIFI_POWER_5dBm;
-    else if (wifiPowerStr == "7dBm") p_tDev->wifipow = WIFI_POWER_7dBm;
-    else if (wifiPowerStr == "8.5dBm") p_tDev->wifipow = WIFI_POWER_8_5dBm;
-    else if (wifiPowerStr == "11dBm") p_tDev->wifipow = WIFI_POWER_11dBm;
-    else if (wifiPowerStr == "13dBm") p_tDev->wifipow = WIFI_POWER_13dBm;
-    else if (wifiPowerStr == "15dBm") p_tDev->wifipow = WIFI_POWER_15dBm;
-    else if (wifiPowerStr == "17dBm") p_tDev->wifipow = WIFI_POWER_17dBm;
-    else if (wifiPowerStr == "18.5dBm") p_tDev->wifipow = WIFI_POWER_18_5dBm;
-    else if (wifiPowerStr == "19dBm") p_tDev->wifipow = WIFI_POWER_19dBm;
-    else if (wifiPowerStr == "19.5dBm") p_tDev->wifipow = WIFI_POWER_19_5dBm;
-    log_i("Updated wifi_power: %s", wifiPowerStr.c_str());
-    config_updated = true;
-  }
-
-  // Update sensor configuration
+  // o3_zero_value - can be 0 or negative
   if (!server_doc["o3_zero_value"].isNull())
   {
-    p_tData->ozoneData.o3ZeroOffset = server_doc["o3_zero_value"].as<int>();
-    log_i("Updated o3_zero_value: %d", p_tData->ozoneData.o3ZeroOffset);
+    int value = server_doc["o3_zero_value"].as<int>();
+    p_tData->ozoneData.o3ZeroOffset = value;
+    log_i("Updated o3_zero_value: %d", value);
     config_updated = true;
+    fields_validated++;
   }
 
+  // average_measurements - minimum value is 2
   if (!server_doc["average_measurements"].isNull())
   {
-    pDev->avg_measurements = server_doc["average_measurements"].as<int>();
-    log_i("Updated average_measurements: %d", pDev->avg_measurements);
-    config_updated = true;
+    int value = server_doc["average_measurements"].as<int>();
+    if (value >= 2)
+    {
+      pDev->avg_measurements = value;
+      log_i("Updated average_measurements: %d", value);
+      config_updated = true;
+      fields_validated++;
+    }
+    else
+    {
+      log_w("Rejected average_measurements: %d (minimum is 2) - keeping current value: %d", value, pDev->avg_measurements);
+      fields_rejected++;
+    }
   }
 
+  // average_delay_seconds - can be 0
   if (!server_doc["average_delay_seconds"].isNull())
   {
-    pDev->avg_delay = server_doc["average_delay_seconds"].as<int>();
-    log_i("Updated average_delay_seconds: %d", pDev->avg_delay);
+    int value = server_doc["average_delay_seconds"].as<int>();
+    pDev->avg_delay = value;
+    log_i("Updated average_delay_seconds: %d", value);
     config_updated = true;
+    fields_validated++;
   }
 
+  // sea_level_altitude - can be 0
   if (!server_doc["sea_level_altitude"].isNull())
   {
-    p_tData->gasData.seaLevelAltitude = server_doc["sea_level_altitude"].as<float>();
-    log_i("Updated sea_level_altitude: %.2f", p_tData->gasData.seaLevelAltitude);
+    float value = server_doc["sea_level_altitude"].as<float>();
+    p_tData->gasData.seaLevelAltitude = value;
+    log_i("Updated sea_level_altitude: %.2f", value);
     config_updated = true;
+    fields_validated++;
   }
 
-  if (!server_doc["upload_server"].isNull())
-  {
-    p_tSysData->server = server_doc["upload_server"].as<String>();
-    log_i("Updated upload_server from server");
-    config_updated = true;
-  }
+  // ===== MICS CALIBRATION VALUES =====
+  // Can be 0, stored as uint16_t
 
-  // Update MICS calibration values
   if (!server_doc["mics_calibration_red"].isNull())
   {
-    p_tData->micsTuningData.sensingResInAir.redSensor = server_doc["mics_calibration_red"].as<uint16_t>();
-    log_i("Updated mics_calibration_red: %d", p_tData->micsTuningData.sensingResInAir.redSensor);
+    uint16_t value = server_doc["mics_calibration_red"].as<uint16_t>();
+    p_tData->micsTuningData.sensingResInAir.redSensor = value;
+    log_i("Updated mics_calibration_red: %d", value);
     config_updated = true;
+    fields_validated++;
   }
 
   if (!server_doc["mics_calibration_ox"].isNull())
   {
-    p_tData->micsTuningData.sensingResInAir.oxSensor = server_doc["mics_calibration_ox"].as<uint16_t>();
-    log_i("Updated mics_calibration_ox: %d", p_tData->micsTuningData.sensingResInAir.oxSensor);
+    uint16_t value = server_doc["mics_calibration_ox"].as<uint16_t>();
+    p_tData->micsTuningData.sensingResInAir.oxSensor = value;
+    log_i("Updated mics_calibration_ox: %d", value);
     config_updated = true;
+    fields_validated++;
   }
 
   if (!server_doc["mics_calibration_nh3"].isNull())
   {
-    p_tData->micsTuningData.sensingResInAir.nh3Sensor = server_doc["mics_calibration_nh3"].as<uint16_t>();
-    log_i("Updated mics_calibration_nh3: %d", p_tData->micsTuningData.sensingResInAir.nh3Sensor);
+    uint16_t value = server_doc["mics_calibration_nh3"].as<uint16_t>();
+    p_tData->micsTuningData.sensingResInAir.nh3Sensor = value;
+    log_i("Updated mics_calibration_nh3: %d", value);
     config_updated = true;
+    fields_validated++;
   }
 
-  // Update MICS offset values
+  // ===== MICS OFFSET VALUES =====
+  // Can be 0, stored as int16_t (can be negative)
+
   if (!server_doc["mics_offset_red"].isNull())
   {
-    p_tData->micsTuningData.sensingResInAirOffset.redSensor = server_doc["mics_offset_red"].as<int16_t>();
-    log_i("Updated mics_offset_red: %d", p_tData->micsTuningData.sensingResInAirOffset.redSensor);
+    int16_t value = server_doc["mics_offset_red"].as<int16_t>();
+    p_tData->micsTuningData.sensingResInAirOffset.redSensor = value;
+    log_i("Updated mics_offset_red: %d", value);
     config_updated = true;
+    fields_validated++;
   }
 
   if (!server_doc["mics_offset_ox"].isNull())
   {
-    p_tData->micsTuningData.sensingResInAirOffset.oxSensor = server_doc["mics_offset_ox"].as<int16_t>();
-    log_i("Updated mics_offset_ox: %d", p_tData->micsTuningData.sensingResInAirOffset.oxSensor);
+    int16_t value = server_doc["mics_offset_ox"].as<int16_t>();
+    p_tData->micsTuningData.sensingResInAirOffset.oxSensor = value;
+    log_i("Updated mics_offset_ox: %d", value);
     config_updated = true;
+    fields_validated++;
   }
 
   if (!server_doc["mics_offset_nh3"].isNull())
   {
-    p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor = server_doc["mics_offset_nh3"].as<int16_t>();
-    log_i("Updated mics_offset_nh3: %d", p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor);
+    int16_t value = server_doc["mics_offset_nh3"].as<int16_t>();
+    p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor = value;
+    log_i("Updated mics_offset_nh3: %d", value);
     config_updated = true;
+    fields_validated++;
   }
 
-  // Update compensation factors
+  // ===== COMPENSATION FACTORS =====
+  // Can be 0
+
   if (!server_doc["comp_h"].isNull())
   {
-    p_tData->compParams.currentHumidity = server_doc["comp_h"].as<float>();
-    log_i("Updated comp_h: %.2f", p_tData->compParams.currentHumidity);
+    float value = server_doc["comp_h"].as<float>();
+    p_tData->compParams.currentHumidity = value;
+    log_i("Updated comp_h: %.2f", value);
     config_updated = true;
+    fields_validated++;
   }
 
   if (!server_doc["comp_t"].isNull())
   {
-    p_tData->compParams.currentTemperature = server_doc["comp_t"].as<float>();
-    log_i("Updated comp_t: %.2f", p_tData->compParams.currentTemperature);
+    float value = server_doc["comp_t"].as<float>();
+    p_tData->compParams.currentTemperature = value;
+    log_i("Updated comp_t: %.2f", value);
     config_updated = true;
+    fields_validated++;
   }
 
   if (!server_doc["comp_p"].isNull())
   {
-    p_tData->compParams.currentPressure = server_doc["comp_p"].as<float>();
-    log_i("Updated comp_p: %.2f", p_tData->compParams.currentPressure);
+    float value = server_doc["comp_p"].as<float>();
+    p_tData->compParams.currentPressure = value;
+    log_i("Updated comp_p: %.2f", value);
     config_updated = true;
+    fields_validated++;
   }
 
-  // Update modem configuration
-  if (!server_doc["use_modem"].isNull())
-  {
-    p_tSys->use_modem = server_doc["use_modem"].as<bool>() ? 1 : 0;
-    log_i("Updated use_modem: %s", p_tSys->use_modem ? "true" : "false");
-    config_updated = true;
-  }
+  // ===== TIME CONFIGURATION =====
+  // Strings cannot be empty
 
-  if (!server_doc["modem_apn"].isNull())
-  {
-    p_tDev->apn = server_doc["modem_apn"].as<String>();
-    log_i("Updated modem_apn from server");
-    config_updated = true;
-  }
-
-  // Update time configuration
   if (!server_doc["ntp_server"].isNull())
   {
-    p_tSysData->ntp_server = server_doc["ntp_server"].as<String>();
-    log_i("Updated ntp_server: %s", p_tSysData->ntp_server.c_str());
-    config_updated = true;
+    String value = server_doc["ntp_server"].as<String>();
+    if (value.length() > 0)
+    {
+      p_tSysData->ntp_server = value;
+      log_i("Updated ntp_server: %s", value.c_str());
+      config_updated = true;
+      fields_validated++;
+    }
+    else
+    {
+      log_w("Rejected ntp_server: empty string - keeping current value: %s", p_tSysData->ntp_server.c_str());
+      fields_rejected++;
+    }
   }
 
   if (!server_doc["timezone"].isNull())
   {
-    p_tSysData->timezone = server_doc["timezone"].as<String>();
-    log_i("Updated timezone: %s", p_tSysData->timezone.c_str());
-    config_updated = true;
+    String value = server_doc["timezone"].as<String>();
+    if (value.length() > 0)
+    {
+      p_tSysData->timezone = value;
+      log_i("Updated timezone: %s", value.c_str());
+      config_updated = true;
+      fields_validated++;
+    }
+    else
+    {
+      log_w("Rejected timezone: empty string - keeping current value: %s", p_tSysData->timezone.c_str());
+      fields_rejected++;
+    }
   }
 
-  // Update system configuration
+  // ===== SYSTEM CONFIGURATION =====
+
+  // fw_auto_upgrade - arrives as 0 or 1 (integer), not boolean
   if (!server_doc["fw_auto_upgrade"].isNull())
   {
-    p_tSys->fwAutoUpgrade = server_doc["fw_auto_upgrade"].as<bool>() ? 1 : 0;
-    log_i("Updated fw_auto_upgrade: %s", p_tSys->fwAutoUpgrade ? "true" : "false");
-    config_updated = true;
+    int value = server_doc["fw_auto_upgrade"].as<int>();
+    if (value == 0 || value == 1)
+    {
+      p_tSys->fwAutoUpgrade = value;
+      log_i("Updated fw_auto_upgrade: %d (%s)", value, value ? "enabled" : "disabled");
+      config_updated = true;
+      fields_validated++;
+    }
+    else
+    {
+      log_w("Rejected fw_auto_upgrade: %d (must be 0 or 1) - keeping current value: %d", value, p_tSys->fwAutoUpgrade);
+      fields_rejected++;
+    }
   }
 
+  // gas_sensor_type - 0 (MICS6814) or 1 (MICS4514)
   if (!server_doc["gas_sensor_type"].isNull())
   {
-    p_tSys->gasSensorType = server_doc["gas_sensor_type"].as<uint8_t>();
-    log_i("Updated gas_sensor_type: %d (%s)", p_tSys->gasSensorType,
-          (p_tSys->gasSensorType == 0) ? "MICS6814" : (p_tSys->gasSensorType == 1) ? "MICS4514" : "Unknown");
-    config_updated = true;
+    uint8_t value = server_doc["gas_sensor_type"].as<uint8_t>();
+    if (value <= 1)
+    {
+      p_tSys->gasSensorType = value;
+      log_i("Updated gas_sensor_type: %d (%s)", value,
+            (value == 0) ? "MICS6814" : "MICS4514");
+      config_updated = true;
+      fields_validated++;
+    }
+    else
+    {
+      log_w("Rejected gas_sensor_type: %d (must be 0 or 1) - keeping current value: %d", value, p_tSys->gasSensorType);
+      fields_rejected++;
+    }
   }
+
+  // ===== SUMMARY =====
+
+  log_i("Configuration update summary: %d fields validated, %d fields rejected", fields_validated, fields_rejected);
 
   if (!config_updated)
   {
-    log_i("No configuration changes received from server");
+    log_i("No valid configuration changes received from server");
     return true;
   }
 

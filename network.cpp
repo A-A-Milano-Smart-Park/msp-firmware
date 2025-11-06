@@ -51,6 +51,7 @@ static TaskHandle_t networkTaskHandle = NULL;
 
 // Queue and synchronization objects
 static QueueHandle_t sendDataQueue = NULL;
+static QueueHandle_t serverConfigQueue = NULL; // Queue for server config responses
 static EventGroupHandle_t networkEventGroup = NULL;
 static StaticEventGroup_t networkEventGroupBuffer;
 static SemaphoreHandle_t networkStateMutex = NULL;
@@ -165,6 +166,16 @@ bool dequeueSendData(send_data_t *data, TickType_t ticksToWait)
     return (xQueueReceive(sendDataQueue, data, ticksToWait) == pdPASS);
 }
 
+bool dequeueServerConfig(server_config_msg_t *config, TickType_t ticksToWait)
+{
+    if (serverConfigQueue == NULL || config == NULL)
+    {
+        return false;
+    }
+
+    return (xQueueReceive(serverConfigQueue, config, ticksToWait) == pdPASS);
+}
+
 void initSendDataOp(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetworkInfo_t *devInfo)
 {
     // Store global data structure pointers
@@ -175,7 +186,7 @@ void initSendDataOp(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetw
     log_i("Network task initialized with global data structures");
     log_i("Server OK from main task: %d", globalSysStatus->server_ok);
 
-    // Create queue
+    // Create send data queue
     if (sendDataQueue == NULL)
     {
         sendDataQueue = xQueueCreate(SEND_DATA_QUEUE_LENGTH, sizeof(send_data_t));
@@ -192,6 +203,18 @@ void initSendDataOp(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetw
         log_i("Queue already exists with %d items, flushing stale data", uxQueueMessagesWaiting(sendDataQueue));
         xQueueReset(sendDataQueue);
         log_i("Queue flushed, now has %d items", uxQueueMessagesWaiting(sendDataQueue));
+    }
+
+    // Create server config queue (size 1 - only latest config matters)
+    if (serverConfigQueue == NULL)
+    {
+        serverConfigQueue = xQueueCreate(1, sizeof(server_config_msg_t));
+        if (serverConfigQueue == NULL)
+        {
+            log_e("Failed to create server config queue");
+            return;
+        }
+        log_i("Server config queue created successfully");
     }
 
     // Create mutex for network state protection
@@ -1318,6 +1341,24 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
                         log_i("Storing server configuration response (%d bytes)", body.length());
                         sysData->server_config_response = body;
                         sysData->server_config_received = true;
+
+                        // Send config to main loop via queue
+                        server_config_msg_t configMsg;
+                        configMsg.valid = true;
+                        configMsg.response_length = min((size_t)body.length(), sizeof(configMsg.json_response) - 1);
+                        strncpy(configMsg.json_response, body.c_str(), configMsg.response_length);
+                        configMsg.json_response[configMsg.response_length] = '\0';
+
+                        // Overwrite any old config (queue size is 1)
+                        if (serverConfigQueue != NULL)
+                        {
+                            xQueueOverwrite(serverConfigQueue, &configMsg);
+                            log_i("Server config sent to main loop via queue");
+                        }
+                        else
+                        {
+                            log_w("Server config queue not available");
+                        }
                     }
                 }
 

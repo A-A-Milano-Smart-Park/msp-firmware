@@ -288,6 +288,14 @@ typedef struct __SYSTEMDATA_T__
   bool server_config_received; // Flag indicating new config available from server
 } systemData_t;
 
+// Server configuration message for inter-task communication via queue
+typedef struct __SERVER_CONFIG_MSG_T__
+{
+  char json_response[512]; // Server JSON response (max 512 bytes)
+  uint16_t response_length; // Actual length of response
+  bool valid; // Whether this message contains valid data
+} server_config_msg_t;
+
 typedef struct __SEND_DATA__
 {
   tm sendTimeInfo; /*!< Date and time of the data to be sent */
