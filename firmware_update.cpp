@@ -20,6 +20,10 @@
 #include <SD.h>
 #include "esp32-hal-log.h"
 
+// TinyGSM includes for GSM support
+#define TINY_GSM_MODEM_SIM800
+#include <TinyGsmClient.h>
+
 // ESP-IDF OTA includes
 #include "esp_ota_ops.h"
 #include "esp_partition.h"
@@ -54,6 +58,8 @@
 
 static String extractVersionFromTag(const String &tag);
 static bool downloadFile(const String &url, const String &filepath);
+static bool downloadFileGSM(const String &url, const String &filepath);
+static bool downloadFileWiFi(const String &url, const String &filepath);
 
 /**
  * @brief Check for firmware updates on GitHub
@@ -68,18 +74,38 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
     // Ensure we have internet connection
     if (isNetworkConnected() == false)
     {
-        log_w("WiFi not connected for firmware update check");
+        log_w("Network not connected for firmware update check");
         setFirmwareOperationInProgress(false); // Clear flag before returning
         requestNetworkConnection();
         return false;
     }
+
+    // Determine which client to use based on connection type
+    TinyGsm* modem = getModemInstance();
+    bool useGSM = sysStatus->use_modem && modem && modem->isGprsConnected();
+
+    String payload;
+
+    if (useGSM)
+    {
+        // GitHub API requires HTTPS, but SIM800 doesn't support SSL/TLS
+        // Firmware update checks are only possible via WiFi
+        log_w("Firmware update check via GSM is not supported");
+        log_w("GitHub API requires HTTPS which SIM800 modem cannot handle");
+        log_i("Firmware updates will only be performed when WiFi is available");
+        setFirmwareOperationInProgress(false);
+        return false;
+    }
+
+    // WiFi path - use standard HTTPClient with HTTPS support
+    log_i("Using WiFi client for firmware update check");
 
     HTTPClient http;
     http.setTimeout(FIRMWARE_UPDATE_TIMEOUT_MS);
 
     if (!http.begin(GITHUB_API_URL))
     {
-        log_e("Failed to initialize HTTP client for GitHub API");
+        log_e("Failed to initialize HTTP client for GitHub API (WiFi)");
         setFirmwareOperationInProgress(false);
         return false;
     }
@@ -97,7 +123,7 @@ bool bHalFirmware_checkForUpdates(systemData_t *sysData, systemStatus_t *sysStat
         return false;
     }
 
-    String payload = http.getString();
+    payload = http.getString();
     http.end();
 
     log_d("GitHub API response: %s", payload.substring(0, 200).c_str());
@@ -617,7 +643,7 @@ static String extractVersionFromTag(const String &tag)
 }
 
 /**
- * @brief Download file from URL to SD card
+ * @brief Download file from URL to SD card (routing function)
  */
 static bool downloadFile(const String &url, const String &filepath)
 {
@@ -637,6 +663,29 @@ static bool downloadFile(const String &url, const String &filepath)
         clearFirmwareDownloadInProgress();
         return false;
     }
+
+    // Determine which download method to use based on active connection
+    TinyGsm* modem = getModemInstance();
+    bool useGSM = modem && modem->isGprsConnected();
+
+    if (useGSM)
+    {
+        log_i("Using GSM download method");
+        return downloadFileGSM(url, filepath);
+    }
+    else
+    {
+        log_i("Using WiFi download method");
+        return downloadFileWiFi(url, filepath);
+    }
+}
+
+/**
+ * @brief Download file from URL to SD card using WiFi
+ */
+static bool downloadFileWiFi(const String &url, const String &filepath)
+{
+    log_i("WiFi download: %s", url.c_str());
 
     HTTPClient http;
     http.setTimeout(FIRMWARE_UPDATE_TIMEOUT_MS);
@@ -846,7 +895,6 @@ static bool downloadFile(const String &url, const String &filepath)
     unsigned long lastDataTime = millis();
     unsigned long noDataTimeout = 30000; // 30 second timeout for no data
     int consecutiveNoDataCount = 0;
-    const int maxNoDataRetries = 100; // Maximum retries when no data available
 
     log_i("Starting download loop - expecting %d bytes total", totalLength);
 
@@ -1065,6 +1113,304 @@ static bool downloadFile(const String &url, const String &filepath)
     esp_restart();
     
     return true; // Will never reach here due to restart
+}
+
+/**
+ * @brief Download file from URL to SD card using GSM
+ * Based on TinyGSM FileDownload example
+ */
+static bool downloadFileGSM(const String &url, const String &filepath)
+{
+    log_i("GSM download: %s", url.c_str());
+
+    TinyGsm* modem = getModemInstance();
+    TinyGsmClient* gsmClient = getGsmClientInstance();
+
+    if (!gsmClient || !modem || !modem->isGprsConnected())
+    {
+        log_e("GSM client not available or not connected");
+        clearFirmwareDownloadInProgress();
+        return false;
+    }
+
+    // Parse URL to extract server, port, and resource path
+    String server;
+    int port = 80;
+    String resource;
+
+    // Remove protocol prefix
+    String urlCopy = url;
+    if (urlCopy.startsWith("https://"))
+    {
+        urlCopy = urlCopy.substring(8);
+        port = 443;
+    }
+    else if (urlCopy.startsWith("http://"))
+    {
+        urlCopy = urlCopy.substring(7);
+        port = 80;
+    }
+
+    // Extract server and resource
+    int slashIndex = urlCopy.indexOf('/');
+    if (slashIndex > 0)
+    {
+        server = urlCopy.substring(0, slashIndex);
+        resource = urlCopy.substring(slashIndex);
+    }
+    else
+    {
+        server = urlCopy;
+        resource = "/";
+    }
+
+    // Check for port in server string
+    int colonIndex = server.indexOf(':');
+    if (colonIndex > 0)
+    {
+        port = server.substring(colonIndex + 1).toInt();
+        server = server.substring(0, colonIndex);
+    }
+
+    log_i("Connecting to server: %s:%d", server.c_str(), port);
+    log_i("Resource: %s", resource.c_str());
+
+    // Connect to server
+    if (!gsmClient->connect(server.c_str(), port))
+    {
+        log_e("Failed to connect to server via GSM");
+        clearFirmwareDownloadInProgress();
+        return false;
+    }
+
+    log_i("Connected to server, sending HTTP GET request...");
+
+    // Send HTTP GET request
+    gsmClient->print(String("GET ") + resource + " HTTP/1.0\r\n");
+    gsmClient->print(String("Host: ") + server + "\r\n");
+    gsmClient->print("User-Agent: MSP-Firmware-Downloader-GSM/1.0\r\n");
+    gsmClient->print("Connection: close\r\n\r\n");
+
+    // Wait for response and read HTTP headers
+    log_i("Waiting for HTTP response headers...");
+    unsigned long timeout = millis();
+    while (gsmClient->connected() && !gsmClient->available())
+    {
+        if (millis() - timeout > 30000L)
+        {
+            log_e("HTTP response timeout");
+            gsmClient->stop();
+            clearFirmwareDownloadInProgress();
+            return false;
+        }
+        delay(100);
+    }
+
+    // Read and parse HTTP headers
+    log_i("Reading HTTP headers...");
+    String headers = "";
+    int contentLength = -1;
+    bool headersComplete = false;
+    timeout = millis();
+
+    while (gsmClient->connected() || gsmClient->available())
+    {
+        if (gsmClient->available())
+        {
+            char c = gsmClient->read();
+            headers += c;
+
+            // Check for end of headers
+            if (headers.endsWith("\r\n\r\n"))
+            {
+                headersComplete = true;
+                log_d("Headers complete");
+                break;
+            }
+
+            timeout = millis(); // Reset timeout when data received
+        }
+
+        if (millis() - timeout > 30000L)
+        {
+            log_e("Headers read timeout");
+            break;
+        }
+        delay(10);
+    }
+
+    if (!headersComplete)
+    {
+        log_e("Failed to read complete HTTP headers");
+        gsmClient->stop();
+        clearFirmwareDownloadInProgress();
+        return false;
+    }
+
+    // Extract status code
+    int statusLineEnd = headers.indexOf('\r');
+    if (statusLineEnd > 0)
+    {
+        String statusLine = headers.substring(0, statusLineEnd);
+        log_i("HTTP Status: %s", statusLine.c_str());
+
+        // Check for success (200 OK)
+        if (statusLine.indexOf("200") < 0 && statusLine.indexOf("OK") < 0)
+        {
+            log_e("HTTP error: %s", statusLine.c_str());
+            gsmClient->stop();
+            clearFirmwareDownloadInProgress();
+            return false;
+        }
+    }
+
+    // Extract Content-Length
+    int contentLengthIndex = headers.indexOf("Content-Length:");
+    if (contentLengthIndex >= 0)
+    {
+        int lineEnd = headers.indexOf('\r', contentLengthIndex);
+        String lengthStr = headers.substring(contentLengthIndex + 15, lineEnd);
+        lengthStr.trim();
+        contentLength = lengthStr.toInt();
+        log_i("Content-Length: %d bytes", contentLength);
+    }
+    else
+    {
+        log_w("Content-Length header not found");
+    }
+
+    // Open file for writing
+    log_i("Opening SD card file for writing: %s", filepath.c_str());
+    File file = SD.open(filepath.c_str(), FILE_WRITE);
+    if (!file)
+    {
+        log_e("Failed to create download file on SD card");
+        gsmClient->stop();
+        clearFirmwareDownloadInProgress();
+        return false;
+    }
+
+    // Download file content with progress tracking
+    log_i("Starting file download...");
+    static uint8_t buffer[DOWNLOAD_BUFFER_SIZE];
+    int bytesWritten = 0;
+    unsigned long lastProgressTime = millis();
+    unsigned long lastDataTime = millis();
+    const unsigned long dataTimeout = 30000; // 30 second timeout for no data
+
+    while (gsmClient->connected() || gsmClient->available())
+    {
+        // Check for timeout
+        if (gsmClient->available())
+        {
+            lastDataTime = millis(); // Reset timeout
+        }
+        else if (millis() - lastDataTime > dataTimeout)
+        {
+            log_e("Data reception timeout after %d bytes", bytesWritten);
+            break;
+        }
+
+        while (gsmClient->available())
+        {
+            int bytesToRead = min((int)gsmClient->available(), (int)sizeof(buffer));
+            int bytesRead = gsmClient->readBytes(buffer, bytesToRead);
+
+            if (bytesRead > 0)
+            {
+                size_t written = file.write(buffer, bytesRead);
+                if (written != bytesRead)
+                {
+                    log_e("SD card write error: wrote %d of %d bytes", written, bytesRead);
+                    file.close();
+                    gsmClient->stop();
+                    clearFirmwareDownloadInProgress();
+                    return false;
+                }
+
+                bytesWritten += bytesRead;
+                lastDataTime = millis();
+
+                // Progress logging every 16KB
+                if (millis() - lastProgressTime > 5000 || bytesWritten % (16 * 1024) == 0)
+                {
+                    if (contentLength > 0)
+                    {
+                        float progress = ((float)bytesWritten / (float)contentLength) * 100.0;
+                        log_i("Download progress: %d/%d bytes (%.1f%%)",
+                              bytesWritten, contentLength, progress);
+                    }
+                    else
+                    {
+                        log_i("Download progress: %d bytes", bytesWritten);
+                    }
+                    lastProgressTime = millis();
+                    file.flush(); // Periodic flush
+                }
+            }
+
+            yield(); // Give other tasks time
+        }
+
+        delay(10);
+    }
+
+    // Close file and connection
+    file.flush();
+    file.close();
+    gsmClient->stop();
+
+    log_i("GSM download completed: %d bytes written", bytesWritten);
+
+    // Validate download
+    bool downloadSuccessful = false;
+    if (contentLength > 0)
+    {
+        downloadSuccessful = (bytesWritten == contentLength);
+        log_i("Download validation: %d bytes written, expected: %d bytes, match: %s",
+              bytesWritten, contentLength, downloadSuccessful ? "EXACT" : "FAILED");
+
+        if (!downloadSuccessful)
+        {
+            log_e("CRITICAL: Incomplete firmware download via GSM!");
+            log_e("Expected: %d bytes, Got: %d bytes, Missing: %d bytes",
+                  contentLength, bytesWritten, contentLength - bytesWritten);
+        }
+    }
+    else
+    {
+        // Unknown size, assume success if we got reasonable amount of data
+        downloadSuccessful = (bytesWritten > 100000); // At least 100KB
+        log_w("Download validation: %d bytes written (unknown expected size), success: %s",
+              bytesWritten, downloadSuccessful ? "ASSUMED" : "FAILED");
+    }
+
+    if (!downloadSuccessful)
+    {
+        log_e("GSM download failed - removing corrupted file");
+        clearFirmwareDownloadInProgress();
+
+        if (SD.exists(filepath.c_str()))
+        {
+            SD.remove(filepath.c_str());
+            log_i("Removed corrupted firmware file: %s", filepath.c_str());
+        }
+
+        delay(2000);
+        esp_restart();
+
+        return false;
+    }
+
+    // Re-enable network connectivity tests
+    clearFirmwareDownloadInProgress();
+
+    // Download successful, restart to apply update
+    log_i("GSM download successful - restarting to apply firmware update");
+    delay(1000);
+    esp_restart();
+
+    return true;
 }
 
 // ESP-IDF OTA management functions implementation

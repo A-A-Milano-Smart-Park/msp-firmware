@@ -1111,8 +1111,8 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
     log_i("Sending data to server: %s", sysData->server.c_str());
     log_i("Device ID: %s", devInfo->deviceid.c_str());
 
-    // Step 1: Ping server to verify connectivity before data transmission
-    if (!pingServer(sysData->server))
+    // Step 1: Ping server to verify connectivity before data transmission only if there is no GSM connection active
+    if ( (false == pingServer(sysData->server)) && (sysStatus->use_modem == false))
     {
         log_e("Server ping failed - aborting data transmission to prevent timeouts");
         return false;
@@ -1603,7 +1603,14 @@ static void networkTask(void *pvParameters)
                 bool internetConnected = false;
                 if ((wifiConnected || gsmConnected) && !networkState.firmwareDownloadInProgress)
                 {
-                    internetConnected = testInternetConnectivity();
+                    if(gsmConnected == true)
+                    {
+                        internetConnected = true;
+                    }
+                    else
+                    {
+                        internetConnected = testInternetConnectivity();
+                    }
                 }
                 else if (networkState.firmwareDownloadInProgress)
                 {
@@ -1671,7 +1678,7 @@ static void networkTask(void *pvParameters)
                 }
             }
 
-            if (!sysStatus.use_modem)
+            if (false == sysStatus.use_modem)
             {
                 // Try WiFi connection
                 log_i("Attempting WiFi connection...");
@@ -2272,4 +2279,14 @@ void clearFirmwareDownloadInProgress(void)
     {
         log_e("Failed to acquire network state mutex for firmware download flag");
     }
+}
+
+TinyGsm* getModemInstance(void)
+{
+    return modem;
+}
+
+TinyGsmClient* getGsmClientInstance(void)
+{
+    return gsmClient;
 }
