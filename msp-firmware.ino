@@ -1269,8 +1269,7 @@ void loop()
     }
 
     // Check if it's time to send data
-    // We transmit when: 1) we have collected avg_measurements AND 2) we're at a transmission boundary AND 3) haven't transmitted at this boundary yet
-    bool have_enough_measurements = (measStat.measurement_count >= measStat.avg_measurements);
+    // We transmit when: 1) we're at a transmission boundary AND 2) haven't transmitted at this boundary yet
 
     // Improved boundary logic: check if current minute is at interval boundary OR enough time has passed since last transmission
     // IMPORTANT: Use max_measurements (configured interval) NOT avg_measurements (dynamic cycle count)
@@ -1367,7 +1366,7 @@ void loop()
           ((measStat.curr_minutes % measStat.max_measurements) == 0) ? "YES" : "NO",
           enough_time_passed ? "YES" : "NO", minutes_since_last_tx);
 
-    if ((have_enough_measurements || at_transmission_boundary) && boundary_not_transmitted)
+    if (at_transmission_boundary && boundary_not_transmitted)
     {
       log_i("All measurements obtained, going to send data...\n");
       mainStateMachine.next_state = SYS_STATE_SEND_DATA; // go to send data state
