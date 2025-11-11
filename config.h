@@ -23,6 +23,12 @@
 
 // ===== Debug Configuration =====
 
+// Configuration Download Control
+// When set to 1, device skips configuration download from server response
+// and works only with local config_v4.json file
+// When set to 0, device retrieves and applies measurement configuration from server after each data send
+#define SKIP_SERVER_CONFIG_DOWNLOAD 1
+
 // Fake NTP Time Testing (format: "YYYY-MM-DD HH:MM:SS" or "HH:MM:SS" or "" to disable)
 #define FAKE_NTP_TIME ""  // override NTP sync with custom date/time for testing
 //

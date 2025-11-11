@@ -443,9 +443,9 @@ void setup()
   measStat.data_transmitted = false; // Initialize transmission flag
 
   sysData.sent_ok = false;
-  sysData.ntp_last_sync_day = -1; // Force initial NTP sync
+  sysData.ntp_last_sync_day = -1;         // Force initial NTP sync
   sysData.server_config_received = false; // No server config yet
-  sysData.server_config_response = ""; // Empty config response
+  sysData.server_config_response = "";    // Empty config response
 
   memset(sysData.Date, 0, sizeof(sysData.Date));
   memset(sysData.Time, 0, sizeof(sysData.Time));
@@ -661,9 +661,9 @@ void loop()
 
         // Check if this is midnight hour transmission (00:xx) and we haven't checked today
         // Allow firmware check for any minute in the midnight hour, not just 00:00
-        if ( sysStat.fwAutoUpgrade &&
-             ((last_fw_check_day == -1) ||
-              ((timeinfo.tm_hour == 0) && (current_day != last_fw_check_day))))
+        if (sysStat.fwAutoUpgrade &&
+            ((last_fw_check_day == -1) ||
+             ((timeinfo.tm_hour == 0) && (current_day != last_fw_check_day))))
         {
           log_d("Firmware check started: hour=%d, min=%d, day=%d, last_check_day=%d, fwAutoUpgrade=%s",
                 timeinfo.tm_hour, timeinfo.tm_min, current_day, last_fw_check_day,
@@ -1367,7 +1367,7 @@ void loop()
           ((measStat.curr_minutes % measStat.max_measurements) == 0) ? "YES" : "NO",
           enough_time_passed ? "YES" : "NO", minutes_since_last_tx);
 
-    if (have_enough_measurements && at_transmission_boundary && boundary_not_transmitted)
+    if ((have_enough_measurements || at_transmission_boundary) && boundary_not_transmitted)
     {
       log_i("All measurements obtained, going to send data...\n");
       mainStateMachine.next_state = SYS_STATE_SEND_DATA; // go to send data state

@@ -1331,6 +1331,9 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
                 log_i("SUCCESS: Data uploaded successfully! Status: %s",
                       response.substring(0, response.indexOf('\r')).c_str());
 
+#if SKIP_SERVER_CONFIG_DOWNLOAD
+                log_i("SKIP_SERVER_CONFIG_DOWNLOAD is enabled - ignoring server configuration response");
+#else
                 // Extract and store server configuration response
                 int bodyStart = response.indexOf("\r\n\r\n");
                 if (bodyStart >= 0 && (bodyStart + 4) < response.length())
@@ -1361,6 +1364,7 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
                         }
                     }
                 }
+#endif
 
                 sysData->sent_ok = true;
                 sendNetworkEvent(NET_EVENT_DATA_SENT);
