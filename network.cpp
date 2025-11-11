@@ -42,7 +42,7 @@
 HardwareSerial gsmSerial(1);
 
 // Task configuration - public values defined in network.h
-#define SEND_DATA_QUEUE_LENGTH 16 // Internal queue configuration
+#define SEND_DATA_QUEUE_LENGTH 512 // Internal queue configuration
 
 // Static task variables
 static StaticTask_t networkTaskBuffer;
@@ -51,6 +51,7 @@ static TaskHandle_t networkTaskHandle = NULL;
 
 // Queue and synchronization objects
 static QueueHandle_t sendDataQueue = NULL;
+static QueueHandle_t serverConfigQueue = NULL; // Queue for server config responses
 static EventGroupHandle_t networkEventGroup = NULL;
 static StaticEventGroup_t networkEventGroupBuffer;
 static SemaphoreHandle_t networkStateMutex = NULL;
@@ -165,6 +166,16 @@ bool dequeueSendData(send_data_t *data, TickType_t ticksToWait)
     return (xQueueReceive(sendDataQueue, data, ticksToWait) == pdPASS);
 }
 
+bool dequeueServerConfig(server_config_msg_t *config, TickType_t ticksToWait)
+{
+    if (serverConfigQueue == NULL || config == NULL)
+    {
+        return false;
+    }
+
+    return (xQueueReceive(serverConfigQueue, config, ticksToWait) == pdPASS);
+}
+
 void initSendDataOp(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetworkInfo_t *devInfo)
 {
     // Store global data structure pointers
@@ -175,7 +186,7 @@ void initSendDataOp(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetw
     log_i("Network task initialized with global data structures");
     log_i("Server OK from main task: %d", globalSysStatus->server_ok);
 
-    // Create queue
+    // Create send data queue
     if (sendDataQueue == NULL)
     {
         sendDataQueue = xQueueCreate(SEND_DATA_QUEUE_LENGTH, sizeof(send_data_t));
@@ -192,6 +203,18 @@ void initSendDataOp(systemData_t *sysData, systemStatus_t *sysStatus, deviceNetw
         log_i("Queue already exists with %d items, flushing stale data", uxQueueMessagesWaiting(sendDataQueue));
         xQueueReset(sendDataQueue);
         log_i("Queue flushed, now has %d items", uxQueueMessagesWaiting(sendDataQueue));
+    }
+
+    // Create server config queue (size 1 - only latest config matters)
+    if (serverConfigQueue == NULL)
+    {
+        serverConfigQueue = xQueueCreate(1, sizeof(server_config_msg_t));
+        if (serverConfigQueue == NULL)
+        {
+            log_e("Failed to create server config queue");
+            return;
+        }
+        log_i("Server config queue created successfully");
     }
 
     // Create mutex for network state protection
@@ -804,11 +827,9 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
     log_i("Synchronizing date and time...");
     updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_RETREIVE_DATETIME);
 
-    // Configure timezone
+    // Get timezone rule (will be used by configTzTime later)
     String tzRule = (sysData->timezone.length() > 0) ? sysData->timezone : TZ_DEFAULT;
-    log_i("Setting timezone: %s", tzRule.c_str());
-    setenv("TZ", tzRule.c_str(), 1);
-    tzset();
+    log_i("Using timezone: %s", tzRule.c_str());
 
 #ifdef FAKE_NTP_TIME
     // Fake NTP sync for testing
@@ -942,9 +963,12 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
         }
         else if (networkState.wifiConnected)
         {
-            // Use WiFi NTP sync
+            // Use WiFi NTP sync with proper timezone handling
             log_i("Syncing time via WiFi NTP...");
-            configTime(0, 0, ntpServer.c_str());
+
+            // Use configTzTime instead of configTime to properly handle timezone
+            // This prevents timezone conflicts that cause permanent time offset
+            configTzTime(tzRule.c_str(), ntpServer.c_str());
 
             // Wait for time sync with timeout
             unsigned long syncStart = millis();
@@ -1087,8 +1111,8 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
     log_i("Sending data to server: %s", sysData->server.c_str());
     log_i("Device ID: %s", devInfo->deviceid.c_str());
 
-    // Step 1: Ping server to verify connectivity before data transmission
-    if (!pingServer(sysData->server))
+    // Step 1: Ping server to verify connectivity before data transmission only if there is no GSM connection active
+    if ( (false == pingServer(sysData->server)) && (sysStatus->use_modem == false))
     {
         log_e("Server ping failed - aborting data transmission to prevent timeouts");
         return false;
@@ -1108,6 +1132,13 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
 
     // Build POST data string
     String postData = "X-MSP-ID=" + devInfo->deviceid;
+
+    // Add firmware version (strip 'v' prefix if present)
+    String fwVersion = String(VERSION_STRING);
+    if (fwVersion.startsWith("v")) {
+        fwVersion = fwVersion.substring(1);
+    }
+    postData += "&firmwareVersion=" + fwVersion;
 
     // Add sensor data - match original working logic by including all available data
     // BME680 data (always include if temperature is in reasonable range)
@@ -1208,7 +1239,7 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
 
             log_i("Waiting for server response (timeout: %d ms)...", SERVER_RESPONSE_TIMEOUT_MS);
 
-            // Wait for initial response or timeout
+            // Wait for response and read until no more data or timeout
             while (millis() - responseStart < SERVER_RESPONSE_TIMEOUT_MS)
             {
                 if (sslClient->available())
@@ -1217,18 +1248,33 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
                     char c = sslClient->read();
                     response += c;
 
-                    // If we've read the HTTP headers (double CRLF), we can analyze the response
+                    // Mark when we've read the HTTP headers
                     if (!headerCompleted && response.indexOf("\r\n\r\n") >= 0)
                     {
                         headerCompleted = true;
                         log_i("HTTP headers received after %lu ms", millis() - responseStart);
-                        break;
+                        // Don't break - continue reading body!
                     }
                 }
                 else
                 {
-                    // No data available yet, wait a bit
-                    delay(10);
+                    // No data available - check if we got headers and should wait for body
+                    if (headerCompleted)
+                    {
+                        // Give a short grace period for body data to arrive
+                        delay(50);
+                        // Check again
+                        if (!sslClient->available())
+                        {
+                            // No more data coming, we're done
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        // Still waiting for headers
+                        delay(10);
+                    }
                 }
             }
 
@@ -1244,14 +1290,34 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
 
             if (response.length() > 0)
             {
-                log_i("  - Response preview (first 200 chars): %s", response.substring(0, 200).c_str());
-
                 // Extract status line for detailed logging
                 int statusLineEnd = response.indexOf('\r');
                 if (statusLineEnd > 0)
                 {
                     String statusLine = response.substring(0, statusLineEnd);
                     log_i("  - Status line: %s", statusLine.c_str());
+                }
+
+                // Extract and print the response body (after headers)
+                int bodyStart = response.indexOf("\r\n\r\n");
+                if (bodyStart >= 0 && (bodyStart + 4) < response.length())
+                {
+                    String body = response.substring(bodyStart + 4);
+                    log_i("  - Response body (%d bytes):", body.length());
+
+                    // Print body in chunks to avoid log truncation
+                    // ESP32 log buffer is typically ~256 bytes, so split if needed
+                    int chunk_size = 200;
+                    for (int i = 0; i < body.length(); i += chunk_size)
+                    {
+                        int end = min(i + chunk_size, (int)body.length());
+                        log_i("    %s", body.substring(i, end).c_str());
+                    }
+                }
+                else
+                {
+                    // Fallback: print first part of response if body not found
+                    log_i("  - Response preview (first 300 chars): %s", response.substring(0, 300).c_str());
                 }
             }
             else
@@ -1264,6 +1330,42 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
             {
                 log_i("SUCCESS: Data uploaded successfully! Status: %s",
                       response.substring(0, response.indexOf('\r')).c_str());
+
+#if SKIP_SERVER_CONFIG_DOWNLOAD
+                log_i("SKIP_SERVER_CONFIG_DOWNLOAD is enabled - ignoring server configuration response");
+#else
+                // Extract and store server configuration response
+                int bodyStart = response.indexOf("\r\n\r\n");
+                if (bodyStart >= 0 && (bodyStart + 4) < response.length())
+                {
+                    String body = response.substring(bodyStart + 4);
+                    if (body.length() > 0)
+                    {
+                        log_i("Storing server configuration response (%d bytes)", body.length());
+                        sysData->server_config_response = body;
+                        sysData->server_config_received = true;
+
+                        // Send config to main loop via queue
+                        server_config_msg_t configMsg;
+                        configMsg.valid = true;
+                        configMsg.response_length = min((size_t)body.length(), sizeof(configMsg.json_response) - 1);
+                        strncpy(configMsg.json_response, body.c_str(), configMsg.response_length);
+                        configMsg.json_response[configMsg.response_length] = '\0';
+
+                        // Overwrite any old config (queue size is 1)
+                        if (serverConfigQueue != NULL)
+                        {
+                            xQueueOverwrite(serverConfigQueue, &configMsg);
+                            log_i("Server config sent to main loop via queue");
+                        }
+                        else
+                        {
+                            log_w("Server config queue not available");
+                        }
+                    }
+                }
+#endif
+
                 sysData->sent_ok = true;
                 sendNetworkEvent(NET_EVENT_DATA_SENT);
                 return true;
@@ -1505,7 +1607,14 @@ static void networkTask(void *pvParameters)
                 bool internetConnected = false;
                 if ((wifiConnected || gsmConnected) && !networkState.firmwareDownloadInProgress)
                 {
-                    internetConnected = testInternetConnectivity();
+                    if(gsmConnected == true)
+                    {
+                        internetConnected = true;
+                    }
+                    else
+                    {
+                        internetConnected = testInternetConnectivity();
+                    }
                 }
                 else if (networkState.firmwareDownloadInProgress)
                 {
@@ -1573,7 +1682,7 @@ static void networkTask(void *pvParameters)
                 }
             }
 
-            if (!sysStatus.use_modem)
+            if (false == sysStatus.use_modem)
             {
                 // Try WiFi connection
                 log_i("Attempting WiFi connection...");
@@ -1819,28 +1928,10 @@ static void networkTask(void *pvParameters)
                           networkState.timeSync, sysStatus.server_ok);
                 }
 
-                // Always log to SD card regardless of transmission status
-                log_i("Writing data to SD card (mandatory logging)... SD status: %s", sysStatus.sdCard ? "OK" : "FAIL");
-                if (sysStatus.sdCard)
-                {
-                    // Use a local sensor data structure - will be populated by the functions that need it
-                    sensorData_t localSensorData;
-                    memset(&localSensorData, 0, sizeof(sensorData_t));
-
-                    // Set default sensor status for logging
-                    // The logging function will handle sensor data based on actual values in currentData
-                    localSensorData.status.BME680Sensor = true; // Assume available if data exists
-                    localSensorData.status.PMS5003Sensor = true;
-                    localSensorData.status.MICS6814Sensor = true;
-                    localSensorData.status.O3Sensor = true;
-
-                    vHalSdcard_logToSD(&currentData, &sysData, &sysStatus, &localSensorData, &devInfo);
-                    log_i("Data logged to SD card successfully with date-based folder structure");
-                }
-                else
-                {
-                    log_w("SD card not available for logging - data will be lost!");
-                }
+                // SD card logging removed from here - data is now logged immediately after sensor reading
+                // in msp-firmware.ino before enqueueing, to ensure data is always logged regardless of
+                // network status and to prevent duplicate logging when queue is processed
+                log_i("SD card logging already completed at measurement time - skipping duplicate log");
 
                 // Print measurements to serial
                 log_d("Printing measurements to serial...");
@@ -2192,4 +2283,14 @@ void clearFirmwareDownloadInProgress(void)
     {
         log_e("Failed to acquire network state mutex for firmware download flag");
     }
+}
+
+TinyGsm* getModemInstance(void)
+{
+    return modem;
+}
+
+TinyGsmClient* getGsmClientInstance(void)
+{
+    return gsmClient;
 }

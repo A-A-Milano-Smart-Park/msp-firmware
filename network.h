@@ -24,6 +24,10 @@
 #include <freertos/event_groups.h>
 #include <freertos/semphr.h>
 
+// Forward declarations for GSM objects
+#define TINY_GSM_MODEM_SIM800
+#include <TinyGsmClient.h>
+
 // Network internal event bits for task management (different from public events)
 #define NET_EVT_CONNECT_REQ      (1 << 5)
 #define NET_EVT_DISCONNECT_REQ   (1 << 6)
@@ -98,6 +102,14 @@ bool enqueueSendData(const send_data_t &data, TickType_t ticksToWait);
  */
 bool dequeueSendData(send_data_t *data, TickType_t ticksToWait);
 
+/**
+ * @brief Check if server configuration is available from network task
+ * @param config Pointer to store the configuration message
+ * @param ticksToWait Maximum time to wait if queue is empty (0 for non-blocking)
+ * @return true if config was available and retrieved, false otherwise
+ */
+bool dequeueServerConfig(server_config_msg_t *config, TickType_t ticksToWait);
+
 // ===== Event Management =====
 
 /**
@@ -162,6 +174,18 @@ bool getNetworkStatus(bool *wifiConnected, bool *gsmConnected, bool *timeSync);
  * @return true if network is connected, false otherwise
  */
 bool isNetworkConnected();
+
+/**
+ * @brief Get pointer to GSM modem instance
+ * @return Pointer to TinyGsm modem instance, or NULL if not initialized
+ */
+TinyGsm* getModemInstance(void);
+
+/**
+ * @brief Get pointer to GSM client instance
+ * @return Pointer to TinyGsmClient instance, or NULL if not initialized
+ */
+TinyGsmClient* getGsmClientInstance(void);
 
 /**
  * @brief Set firmware operation in progress flag to prevent network disconnection

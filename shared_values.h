@@ -49,6 +49,7 @@ typedef struct __STATE_MACHINE__
 
 typedef enum __SYSTEM_STATES__
 {
+  SYS_STATE_UPDATE_CONFIG_FROM_SERVER,
   SYS_STATE_WAIT_FOR_NTP_SYNC,
   SYS_STATE_FW_VERSION_CHECK,
   SYS_STATE_WAIT_FOR_TIMEOUT,
@@ -138,9 +139,9 @@ typedef struct __MICS6814_MOLAR_MASS_VAL__
 
 typedef struct __MICS6814_DATA_
 {
-  float carbonMonoxide;  // Carbon monoxide CO 1 – 1000ppm
-  float nitrogenDioxide; // Nitrogen dioxide NO2 0.05 – 10ppm
-  float ammonia;         // Ammonia NH3 1 – 500ppm
+  float carbonMonoxide;  // Carbon monoxide CO 1 - 1000ppm
+  float nitrogenDioxide; // Nitrogen dioxide NO2 0.05 - 10ppm
+  float ammonia;         // Ammonia NH3 1 - 500ppm
 } pollutionReading;
 
 typedef struct __MICS_TUNING_DATA__
@@ -283,7 +284,17 @@ typedef struct __SYSTEMDATA_T__
   char Date[DATE_LEN];
   char Time[TIME_LEN];
   int ntp_last_sync_day; // Day of year (0-365) when NTP was last synced
+  String server_config_response; // JSON response from server with configuration
+  bool server_config_received; // Flag indicating new config available from server
 } systemData_t;
+
+// Server configuration message for inter-task communication via queue
+typedef struct __SERVER_CONFIG_MSG_T__
+{
+  char json_response[512]; // Server JSON response (max 512 bytes)
+  uint16_t response_length; // Actual length of response
+  bool valid; // Whether this message contains valid data
+} server_config_msg_t;
 
 typedef struct __SEND_DATA__
 {
