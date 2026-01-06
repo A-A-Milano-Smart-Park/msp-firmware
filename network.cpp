@@ -831,90 +831,6 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
     String tzRule = (sysData->timezone.length() > 0) ? sysData->timezone : TZ_DEFAULT;
     log_i("Using timezone: %s", tzRule.c_str());
 
-#ifdef FAKE_NTP_TIME
-    // Fake NTP sync for testing
-    if (strlen(FAKE_NTP_TIME) > 0)
-    {
-        struct tm timeInfo;
-        time_t now;
-        time(&now);
-        localtime_r(&now, &timeInfo);
-
-        int year, month, day, hour, minute, second;
-        static bool validTime = false;
-        if (validTime == true)
-        {
-            // Update system status and network state like real NTP sync
-            sysStatus->datetime = true;
-            if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
-            {
-                networkState.timeSync = true;
-                xSemaphoreGive(networkStateMutex);
-            }
-
-            // Send the event that main loop is waiting for
-            sendNetworkEvent(NET_EVENT_TIME_SYNCED);
-            return true;
-        }
-
-        // Try full date-time format first: "YYYY-MM-DD HH:MM:SS"
-        if (sscanf(FAKE_NTP_TIME, "%d-%d-%d %d:%d:%d", &year, &month, &day, &hour, &minute, &second) == 6)
-        {
-            if (year >= 2020 && year <= 2030 && month >= 1 && month <= 12 && day >= 1 && day <= 31 &&
-                hour >= 0 && hour < 24 && minute >= 0 && minute < 60 && second >= 0 && second < 60)
-            {
-                timeInfo.tm_year = year - 1900;
-                timeInfo.tm_mon = month - 1;
-                timeInfo.tm_mday = day;
-                validTime = true;
-            }
-        }
-        // Fallback to time-only format: "HH:MM:SS" (uses current date)
-        else if (sscanf(FAKE_NTP_TIME, "%d:%d:%d", &hour, &minute, &second) == 3)
-        {
-            if (hour >= 0 && hour < 24 && minute >= 0 && minute < 60 && second >= 0 && second < 60)
-            {
-                validTime = true;
-            }
-        }
-
-        if (validTime)
-        {
-            timeInfo.tm_hour = hour;
-            timeInfo.tm_min = minute;
-            timeInfo.tm_sec = second;
-            timeInfo.tm_isdst = -1;
-
-            time_t fakeTime = mktime(&timeInfo);
-            if (fakeTime > 0)
-            {
-                struct timeval tv = {fakeTime, 0};
-                settimeofday(&tv, NULL);
-
-                strftime(sysData->Date, sizeof(sysData->Date), "%d/%m/%Y", &timeInfo);
-                strftime(sysData->Time, sizeof(sysData->Time), "%T", &timeInfo);
-                sysData->currentDataTime = String(sysData->Date) + " " + String(sysData->Time);
-
-                log_i("Fake time set: %s", sysData->currentDataTime.c_str());
-                updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_DATETIME_OK);
-
-                // Update system status and network state like real NTP sync
-                sysStatus->datetime = true;
-                if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
-                {
-                    networkState.timeSync = true;
-                    xSemaphoreGive(networkStateMutex);
-                }
-
-                // Send the event that main loop is waiting for
-                sendNetworkEvent(NET_EVENT_TIME_SYNCED);
-                return true;
-            }
-        }
-        log_w("Fake time setup failed, using real NTP");
-    }
-#endif
-
     // Validate NTP server
     String ntpServer = (sysData->ntp_server.length() > 0) ? sysData->ntp_server : NTP_SERVER_DEFAULT;
     log_i("Using NTP server: %s", ntpServer.c_str());
@@ -1078,17 +994,6 @@ static bool pingServer(const String &serverName)
 static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devInfo,
                              systemStatus_t *sysStatus, systemData_t *sysData)
 {
-#ifdef FAKE_NTP_TIME
-    // Skip data transmission when fake NTP is active
-    if (strlen(FAKE_NTP_TIME) > 0)
-    {
-        log_i("FAKE_NTP_TIME active - skipping data transmission");
-        sysData->sent_ok = true;
-        sendNetworkEvent(NET_EVENT_DATA_SENT);
-        return true;
-    }
-#endif
-
     if (!sslClient)
     {
         log_e("SSL client not initialized");
