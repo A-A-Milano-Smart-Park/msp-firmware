@@ -323,8 +323,8 @@ void setup()
   }
   //++++++++++++++++++++++++++++++++++++++++++++++
 
-  // MICS6814 ++++++++++++++++++++++++++++++++++++
-  vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+  // MICSxx14 ++++++++++++++++++++++++++++++++++++
+  vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
   // Initialize gas sensor based on configuration type
   switch (sysStat.gasSensorType)
@@ -337,7 +337,7 @@ void setup()
       sensorData_accumulate.status.MICS6814Sensor = true;
       gas.powerOn(); // turn on heating element and led
       gas.ledOn();
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
       sensorR0Value_t r0Values;
       r0Values.redSensor = gas.getBaseResistance(CH_RED);
@@ -347,16 +347,16 @@ void setup()
       if (tHalSensor_checkMicsValues(&sensorData_accumulate, &r0Values) == STATUS_OK)
       {
         log_i("MICS6814 R0 values are already as default!\n");
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       }
       else
       {
         log_i("Setting MICS6814 R0 values as default... ");
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
         vHalSensor_writeMicsValues(&sensorData_accumulate);
 
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
         log_i("Done!\n");
       }
       gas.setOffsets(&sensorData_accumulate.micsTuningData.sensingResInAirOffset.redSensor);
@@ -364,7 +364,7 @@ void setup()
     else
     {
       log_e("MICS6814 sensor not detected!\n");
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     }
     break;
   }
@@ -372,9 +372,10 @@ void setup()
   case GAS_SENSOR_MICS4514:
   {
     log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...\n");
-
     if (mics4514.begin())
-    { // Connect to MICS4514 sensor using I2C
+    {
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      // Connect to MICS4514 sensor using I2C
       log_i("MICS4514 sensor detected, initializing...\n");
       sensorData_accumulate.status.MICS4514Sensor = true;
 
@@ -384,6 +385,7 @@ void setup()
       log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
       uint8_t loadingStep = 0;
       float delayInMs = 5000.0;
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_HEATING_UP, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       while (mics4514.warmUpTime(MICS4514_WARMUP_TIME_MIN) == false)
       {
         // stay here, until the sensor get heaten up.
@@ -396,13 +398,13 @@ void setup()
       sensorData_accumulate.mics4514Data.warmupComplete = 0;
       sensorData_accumulate.mics4514Data.powerState = 1;
 
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       log_i("MICS4514 initialization complete!\n");
     }
     else
     {
       log_e("MICS4514 sensor not detected!\n");
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     }
     break;
   }
@@ -410,7 +412,7 @@ void setup()
   default:
   {
     log_e("Unknown gas sensor type: %d\n", sysStat.gasSensorType);
-    vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     break;
   }
   }
@@ -453,7 +455,7 @@ void setup()
   measStat.curr_seconds = 0;
   measStat.curr_total_seconds = 0;
   measStat.last_transmission_minute = -1; // Initialize to invalid minute
-  measStat.last_transmission_hour = -1; // Initialize to invalid hour
+  measStat.last_transmission_hour = -1;   // Initialize to invalid hour
 
   // STEP 4: Request network connection and wait for NTP sync
   log_i("=== STEP 4: Requesting network connection and NTP sync ===");
@@ -715,6 +717,7 @@ void loop()
       current_day = -1;
     }
 
+    vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_TIMEOUT, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
     break;
   }
     //------------------------------------------------------------------------------------------------------------------------
@@ -1486,8 +1489,8 @@ void loop()
     if (enqueueSendData(sendData, pdMS_TO_TICKS(500)))
     {
       log_i("Data enqueued successfully for network transmission");
-      measStat.data_transmitted = true;                          // Mark data as transmitted for this cycle
-      measStat.last_transmission_minute = measStat.curr_minutes; // Record the transmission boundary minute
+      measStat.data_transmitted = true;                                // Mark data as transmitted for this cycle
+      measStat.last_transmission_minute = measStat.curr_minutes;       // Record the transmission boundary minute
       measStat.last_transmission_hour = sendData.sendTimeInfo.tm_hour; // Record the transmission hour
       log_i("Recorded transmission at %02d:%02d to prevent duplicates", measStat.last_transmission_hour, measStat.last_transmission_minute);
     }
@@ -1656,7 +1659,7 @@ void vMspInit_MeasInfo(void)
   measStat.isPmsAwake = false;
   measStat.isSensorDataAvailable = false;
   measStat.last_transmission_minute = -1; // Initialize to invalid minute
-  measStat.last_transmission_hour = -1; // Initialize to invalid hour
+  measStat.last_transmission_hour = -1;   // Initialize to invalid hour
 }
 
 /**

@@ -32,7 +32,7 @@ void vHalDisplay_initSerialAndI2c(void);
  * 
  * @param fwver 
  *****************************************************/
-void vHalDisplay_DrawBoot(String *fwver);
+void vHalDisplay_DrawBoot(String *fwver, const uint8_t screenDelay);
 
 /*******************************************************
 * @brief draws a text line on the U8G2 display
@@ -78,6 +78,25 @@ void vHalDisplay_drawCountdown(short startsec, const char message[],systemStatus
 void vHalDisplay_drawMicsValues(uint16_t redval, uint16_t oxval, uint16_t nh3val,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr);
 
 /*********************************************************************************
+ * @brief function to draw the firmware version on the display.
+ *
+ * @param statPtr
+ * @param devinfoPtr
+ *********************************************************************************/
+void vHalDisplay_drawFirmwareVersion(systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, const uint8_t secDelay);
+
+/*********************************************************************************
+ * @brief function to draw the configuration values from SD card on the display.
+ *
+ * @param p_tData
+ * @param statPtr
+ * @param devinfoPtr
+ * @param measPtr
+ * @param secDelay
+ *********************************************************************************/
+void vHalDisplay_drawConfigurationValues(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, deviceMeasurement_t *measPtr, const uint8_t secDelay);
+
+/*********************************************************************************
  * @brief function to draw the BME680 gas sensor data on the display.
  * 
  * @param p_tData 
@@ -102,7 +121,7 @@ void vHalDisplay_drawPMS5003AirQualitySensorData(sensorData_t *p_tData,systemSta
  * @param statPtr 
  * @param devinfoPtr 
  ******************************************************************************************/
-void vHalDisplay_drawMICS6814PollutionSensorData(sensorData_t *p_tData,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
 
 /******************************************************************************************
  * @brief function to draw the Ozone sensor data on the display.

@@ -825,7 +825,7 @@ static bool handleGSMConnection(deviceNetworkInfo_t *devInfo, systemStatus_t *sy
 static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus, systemData_t *sysData)
 {
     log_i("Synchronizing date and time...");
-    updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_RETREIVE_DATETIME);
+    updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_RETRIEVE_DATETIME);
 
     // Get timezone rule (will be used by configTzTime later)
     String tzRule = (sysData->timezone.length() > 0) ? sysData->timezone : TZ_DEFAULT;
@@ -1797,7 +1797,7 @@ static void networkTask(void *pvParameters)
                 if (canSendData)
                 {
                     // Show upload status on display
-                    updateDisplayStatus(&devInfo, &sysStatus, DISP_EVENT_URL_UPLOAD_STAT);
+                    updateDisplayStatus(&devInfo, &sysStatus, DISP_EVENT_SENDING_MEAS);
 
                     if (sendDataToServer(&currentData, &devInfo, &sysStatus, &sysData))
                     {
