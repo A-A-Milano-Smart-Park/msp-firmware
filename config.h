@@ -29,6 +29,17 @@
 // When set to 0, device retrieves and applies measurement configuration from server after each data send
 #define SKIP_SERVER_CONFIG_DOWNLOAD 1
 
+// Fake NTP Time Testing (format: "YYYY-MM-DD HH:MM:SS" or "HH:MM:SS" or "" to disable)
+#define FAKE_NTP_TIME ""  // override NTP sync with custom date/time for testing
+//
+// Usage examples:
+// #define FAKE_NTP_TIME "2025-01-15 23:59:30"  // full date-time (recommended)
+// #define FAKE_NTP_TIME "00:05:00"             // time only (uses current date)
+// #define FAKE_NTP_TIME ""                     // disable fake time (empty string)
+//
+// When enabled, this bypasses real NTP sync and data transmission, setting fake time.
+// Useful for testing time-dependent behaviors like midnight firmware checks.
+
 // #define ENABLE_I2C_SCANNER                 // enable to scan I2C devices at startup
 
 // ===== Security Configuration =====
