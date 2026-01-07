@@ -323,8 +323,8 @@ void setup()
   }
   //++++++++++++++++++++++++++++++++++++++++++++++
 
-  // MICS6814 ++++++++++++++++++++++++++++++++++++
-  vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+  // MICSxx14 ++++++++++++++++++++++++++++++++++++
+  vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
   // Initialize gas sensor based on configuration type
   switch (sysStat.gasSensorType)
@@ -337,7 +337,7 @@ void setup()
       sensorData_accumulate.status.MICS6814Sensor = true;
       gas.powerOn(); // turn on heating element and led
       gas.ledOn();
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
       sensorR0Value_t r0Values;
       r0Values.redSensor = gas.getBaseResistance(CH_RED);
@@ -347,16 +347,16 @@ void setup()
       if (tHalSensor_checkMicsValues(&sensorData_accumulate, &r0Values) == STATUS_OK)
       {
         log_i("MICS6814 R0 values are already as default!\n");
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       }
       else
       {
         log_i("Setting MICS6814 R0 values as default... ");
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
         vHalSensor_writeMicsValues(&sensorData_accumulate);
 
-        vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+        vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
         log_i("Done!\n");
       }
       gas.setOffsets(&sensorData_accumulate.micsTuningData.sensingResInAirOffset.redSensor);
@@ -364,7 +364,7 @@ void setup()
     else
     {
       log_e("MICS6814 sensor not detected!\n");
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     }
     break;
   }
@@ -372,9 +372,10 @@ void setup()
   case GAS_SENSOR_MICS4514:
   {
     log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...\n");
-
     if (mics4514.begin())
-    { // Connect to MICS4514 sensor using I2C
+    {
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      // Connect to MICS4514 sensor using I2C
       log_i("MICS4514 sensor detected, initializing...\n");
       sensorData_accumulate.status.MICS4514Sensor = true;
 
@@ -384,6 +385,7 @@ void setup()
       log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
       uint8_t loadingStep = 0;
       float delayInMs = 5000.0;
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_HEATING_UP, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       while (mics4514.warmUpTime(MICS4514_WARMUP_TIME_MIN) == false)
       {
         // stay here, until the sensor get heaten up.
@@ -396,13 +398,13 @@ void setup()
       sensorData_accumulate.mics4514Data.warmupComplete = 0;
       sensorData_accumulate.mics4514Data.powerState = 1;
 
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       log_i("MICS4514 initialization complete!\n");
     }
     else
     {
       log_e("MICS4514 sensor not detected!\n");
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     }
     break;
   }
@@ -410,7 +412,7 @@ void setup()
   default:
   {
     log_e("Unknown gas sensor type: %d\n", sysStat.gasSensorType);
-    vMsp_updateDataAndSendEvent(DISP_EVENT_MICS6814_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     break;
   }
   }
@@ -453,6 +455,7 @@ void setup()
   measStat.curr_seconds = 0;
   measStat.curr_total_seconds = 0;
   measStat.last_transmission_minute = -1; // Initialize to invalid minute
+  measStat.last_transmission_hour = -1;   // Initialize to invalid hour
 
   // STEP 4: Request network connection and wait for NTP sync
   log_i("=== STEP 4: Requesting network connection and NTP sync ===");
@@ -714,6 +717,7 @@ void loop()
       current_day = -1;
     }
 
+    vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_TIMEOUT, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
     break;
   }
     //------------------------------------------------------------------------------------------------------------------------
@@ -803,8 +807,8 @@ void loop()
 
       // Calculate measurements needed to reach next transmission boundary
       // For max_measurements=5: boundaries at 0,5,10,15,20,25,30,35,40,45,50,55
-      int minutes_to_next_boundary;
-      int next_boundary_minute;
+      int minutes_to_next_boundary = 0;
+      int next_boundary_minute = 0;
 
       // Calculate next boundary from current minute
       // If we're exactly at a boundary, move to the NEXT one
@@ -1279,7 +1283,7 @@ void loop()
     bool enough_time_passed = false;
     if (measStat.last_transmission_minute >= 0) // Only check if we have a previous transmission
     {
-      int minutes_since_last_tx;
+      int minutes_since_last_tx = 0;
       if (measStat.curr_minutes > measStat.last_transmission_minute)
       {
         // Same hour, minutes increased
@@ -1293,44 +1297,26 @@ void loop()
       else
       {
         // Same minute as last transmission (curr_minutes == last_transmission_minute)
-        // This can only happen if we're in a different hour
-        // For max_measurements=60, this means a full hour has passed
-        // For smaller intervals, this should not happen (we transmit and move on)
-        if (measStat.max_measurements == 60)
-        {
-          // Full hour passed (e.g., transmitted at 07:00, now at 08:00)
-          minutes_since_last_tx = 60;
-        }
-        else
-        {
-          // For smaller intervals, same minute means same transmission cycle
-          minutes_since_last_tx = 0;
-        }
+        // NEVER allow retransmission at the same minute - this prevents duplicates
+        minutes_since_last_tx = 0;
       }
       enough_time_passed = (minutes_since_last_tx >= measStat.max_measurements);
     }
     else
     {
-      // First transmission ever - always allow
-      enough_time_passed = true;
+      // First transmission ever - wait for standard boundary
+      // Do NOT automatically allow transmission on first boot
+      enough_time_passed = false;
     }
 
     // Use either standard boundary OR enough time has passed
     at_transmission_boundary = at_transmission_boundary || enough_time_passed;
 
     // Prevent duplicate transmissions at same boundary
-    // For max_measurements=60, allow transmission if enough time passed (even if same minute)
-    bool boundary_not_transmitted;
-    if (measStat.max_measurements == 60 && measStat.curr_minutes == measStat.last_transmission_minute)
-    {
-      // For hourly transmissions, same minute means different hour if enough_time_passed is true
-      boundary_not_transmitted = enough_time_passed;
-    }
-    else
-    {
-      // For other intervals, different minute means different boundary
-      boundary_not_transmitted = (measStat.last_transmission_minute != measStat.curr_minutes);
-    }
+    // STRICT: Only transmit once per boundary - check both hour and minute
+    // Get current hour for comparison
+    int curr_hour = timeinfo.tm_hour;
+    bool boundary_not_transmitted = (measStat.last_transmission_hour != curr_hour) || (measStat.last_transmission_minute != measStat.curr_minutes);
 
     // Enhanced logging for boundary logic debugging
     int minutes_since_last_tx = 0;
@@ -1346,21 +1332,15 @@ void loop()
       }
       else
       {
-        // Same minute - check if full hour passed for max_measurements=60
-        if (measStat.max_measurements == 60)
-        {
-          minutes_since_last_tx = 60;
-        }
-        else
-        {
-          minutes_since_last_tx = 0;
-        }
+        // Same minute as last transmission - never allow retransmission
+        minutes_since_last_tx = 0;
       }
     }
 
-    log_i("TRANSMISSION CHECK: collected %d/%d measurements, boundary=%s (minute %d, interval=%d), last_tx_minute=%d",
+    log_i("TRANSMISSION CHECK: collected %d/%d measurements, boundary=%s (time %02d:%02d, interval=%d), last_tx=%02d:%02d",
           measStat.measurement_count, measStat.avg_measurements,
-          at_transmission_boundary ? "YES" : "NO", measStat.curr_minutes, measStat.max_measurements, measStat.last_transmission_minute);
+          at_transmission_boundary ? "YES" : "NO", curr_hour, measStat.curr_minutes, measStat.max_measurements,
+          measStat.last_transmission_hour, measStat.last_transmission_minute);
 
     log_i("BOUNDARY DETAILS: standard_boundary=%s, enough_time_passed=%s, minutes_since_last_tx=%d",
           ((measStat.curr_minutes % measStat.max_measurements) == 0) ? "YES" : "NO",
@@ -1373,7 +1353,7 @@ void loop()
     }
     else if (!boundary_not_transmitted)
     {
-      log_i("Data already transmitted at this boundary (minute %d), waiting for next boundary", measStat.curr_minutes);
+      log_i("Data already transmitted at this boundary (%02d:%02d), waiting for next boundary", curr_hour, measStat.curr_minutes);
       mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
     }
     else
@@ -1510,9 +1490,10 @@ void loop()
     if (enqueueSendData(sendData, pdMS_TO_TICKS(500)))
     {
       log_i("Data enqueued successfully for network transmission");
-      measStat.data_transmitted = true;                          // Mark data as transmitted for this cycle
-      measStat.last_transmission_minute = measStat.curr_minutes; // Record the transmission boundary minute
-      log_i("Recorded transmission at minute %d to prevent duplicates", measStat.last_transmission_minute);
+      measStat.data_transmitted = true;                                // Mark data as transmitted for this cycle
+      measStat.last_transmission_minute = measStat.curr_minutes;       // Record the transmission boundary minute
+      measStat.last_transmission_hour = sendData.sendTimeInfo.tm_hour; // Record the transmission hour
+      log_i("Recorded transmission at %02d:%02d to prevent duplicates", measStat.last_transmission_hour, measStat.last_transmission_minute);
     }
     else
     {
@@ -1679,6 +1660,7 @@ void vMspInit_MeasInfo(void)
   measStat.isPmsAwake = false;
   measStat.isSensorDataAvailable = false;
   measStat.last_transmission_minute = -1; // Initialize to invalid minute
+  measStat.last_transmission_hour = -1;   // Initialize to invalid hour
 }
 
 /**

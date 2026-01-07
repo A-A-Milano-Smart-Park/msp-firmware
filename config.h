@@ -103,7 +103,6 @@
 #define JSON_KEY_WIFI_POWER "wifi_power"
 #define JSON_KEY_O3_ZERO_VALUE "o3_zero_value"
 #define JSON_KEY_AVERAGE_MEASUREMENTS "average_measurements"
-#define JSON_KEY_AVERAGE_DELAY_SECONDS "average_delay_seconds"
 #define JSON_KEY_SEA_LEVEL_ALTITUDE "sea_level_altitude"
 #define JSON_KEY_UPLOAD_SERVER "upload_server"
 #define JSON_KEY_MICS_CALIBRATION_VALUES "mics_calibration_values"
@@ -131,6 +130,10 @@
 // NTP Configuration
 #define NTP_SERVER_DEFAULT "pool.ntp.org"
 #define TZ_DEFAULT "GMT0"
+
+// Timezone Control
+// When defined, forces timezone to GMT0 and ignores timezone changes from SD-Card and server
+#define FORCE_TIMEZONE_GMT0
 
 // Connection Timeouts
 #define WIFI_CONNECTION_TIMEOUT_MS 15000
