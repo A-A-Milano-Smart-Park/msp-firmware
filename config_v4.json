@@ -6,7 +6,6 @@
     "wifi_power": "17dBm",
     "o3_zero_value": -1,
     "average_measurements": 30,
-    "average_delay_seconds": 55,
     "sea_level_altitude": 122.00,
     "upload_server": "",
     "mics_calibration_values": {

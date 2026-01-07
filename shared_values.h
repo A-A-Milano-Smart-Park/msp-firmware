@@ -256,7 +256,6 @@ typedef struct __NETWORK__
 typedef struct __MEASUREMENT__
 {
   int32_t avg_measurements;
-  int32_t avg_delay;
   int32_t max_measurements;
   int32_t measurement_count; /*!< Number of measurements in the current cycle */
   bool data_transmitted; /*!< Flag to prevent duplicate transmissions in the same cycle */

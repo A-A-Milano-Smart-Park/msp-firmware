@@ -313,10 +313,6 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
   pDev->avg_measurements = config[JSON_KEY_AVERAGE_MEASUREMENTS] | 30;
   log_i("avgMeasure = *%d*", pDev->avg_measurements);
 
-  // Parse Average Delay
-  pDev->avg_delay = config[JSON_KEY_AVERAGE_DELAY_SECONDS] | 55;
-  log_i("avgDelay = *%d*", pDev->avg_delay);
-
   // Parse Sea Level Altitude
   p_tData->gasData.seaLevelAltitude = config[JSON_KEY_SEA_LEVEL_ALTITUDE] | 122.0f;
   log_i("sealevelalt = *%.2f*", p_tData->gasData.seaLevelAltitude);
@@ -449,6 +445,7 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
     p_tSysData->ntp_server = DEFAULT_NTP_SERVER;
   }
 
+#ifndef FORCE_TIMEZONE_GMT0
   // Parse Timezone
   if (!config[JSON_KEY_TIMEZONE].isNull())
   {
@@ -467,6 +464,11 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
   {
     log_e("Missing TIMEZONE in config!");
   }
+#else
+  // Force timezone to GMT0 regardless of SD card configuration
+  p_tSysData->timezone = TZ_DEFAULT;
+  log_i("FORCE_TIMEZONE_GMT0 enabled - timezone forced to: %s", p_tSysData->timezone.c_str());
+#endif
 
   // Parse Firmware Auto Upgrade
   sysStat->fwAutoUpgrade = config[JSON_KEY_FW_AUTO_UPGRADE] | false;
@@ -533,7 +535,6 @@ uint8_t checkConfig(const char *configpath, deviceNetworkInfo_t *p_tDev, sensorD
       config[JSON_KEY_WIFI_POWER] = DEFAULT_WIFI_POWER;
       config[JSON_KEY_O3_ZERO_VALUE] = p_tData->ozoneData.o3ZeroOffset;
       config[JSON_KEY_AVERAGE_MEASUREMENTS] = pDev->avg_measurements;
-      config[JSON_KEY_AVERAGE_DELAY_SECONDS] = pDev->avg_delay;
       config[JSON_KEY_SEA_LEVEL_ALTITUDE] = p_tData->gasData.seaLevelAltitude;
       config[JSON_KEY_UPLOAD_SERVER] = "";
 
@@ -664,7 +665,6 @@ bool bHalSdcard_writeConfig(deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, 
   // Sensor configuration
   config[JSON_KEY_O3_ZERO_VALUE] = p_tData->ozoneData.o3ZeroOffset;
   config[JSON_KEY_AVERAGE_MEASUREMENTS] = pDev->avg_measurements;
-  config[JSON_KEY_AVERAGE_DELAY_SECONDS] = pDev->avg_delay;
   config[JSON_KEY_SEA_LEVEL_ALTITUDE] = p_tData->gasData.seaLevelAltitude;
   config[JSON_KEY_UPLOAD_SERVER] = p_tSysData->server;
 
@@ -793,16 +793,6 @@ bool bHalSdcard_updateFromServerConfig(const String &server_json, deviceNetworkI
     }
   }
 
-  // average_delay_seconds - can be 0
-  if (!server_doc["average_delay_seconds"].isNull())
-  {
-    int value = server_doc["average_delay_seconds"].as<int>();
-    pDev->avg_delay = value;
-    log_i("Updated average_delay_seconds: %d", value);
-    config_updated = true;
-    fields_validated++;
-  }
-
   // sea_level_altitude - can be 0
   if (!server_doc["sea_level_altitude"].isNull())
   {
@@ -923,6 +913,7 @@ bool bHalSdcard_updateFromServerConfig(const String &server_json, deviceNetworkI
     }
   }
 
+#ifndef FORCE_TIMEZONE_GMT0
   if (!server_doc["timezone"].isNull())
   {
     String value = server_doc["timezone"].as<String>();
@@ -939,6 +930,11 @@ bool bHalSdcard_updateFromServerConfig(const String &server_json, deviceNetworkI
       fields_rejected++;
     }
   }
+#else
+  // Force timezone to GMT0 regardless of server response
+  p_tSysData->timezone = TZ_DEFAULT;
+  log_i("FORCE_TIMEZONE_GMT0 enabled - timezone forced to: %s", p_tSysData->timezone.c_str());
+#endif
 
   // ===== SYSTEM CONFIGURATION =====
 
@@ -1270,11 +1266,6 @@ void vHalSdcard_readSD(systemStatus_t *p_tSys, deviceNetworkInfo_t *p_tDev, sens
       log_e("No server URL defined. Can't upload data!\n");
       vMsp_sendNetworkDataToDisplay(p_tDev, p_tSys, DISP_EVENT_URL_UPLOAD_STAT);
     }
-    // if (avg_delay < 50) {
-    //   log_e("AVG_DELAY should be at least 50 seconds! Setting to 50...\n");
-    //   vHalDisplay_drawTwoLines("AVG_DELAY less than 50!", "Setting to 50...", 5);
-    //   avg_delay = 50; // must be at least 45 for PMS5003 compensation routine, 5 seconds extra for reading cycle messages
-    // }
     // Legacy logpath system removed - now using date-based logging
   }
 }
