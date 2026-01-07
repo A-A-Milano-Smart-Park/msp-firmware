@@ -1304,8 +1304,9 @@ void loop()
     }
     else
     {
-      // First transmission ever - always allow
-      enough_time_passed = true;
+      // First transmission ever - wait for standard boundary
+      // Do NOT automatically allow transmission on first boot
+      enough_time_passed = false;
     }
 
     // Use either standard boundary OR enough time has passed
