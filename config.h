@@ -151,7 +151,7 @@
 // ===== Version Information =====
 
 #ifndef VERSION_STRING
-#define VERSION_STRING "4.1.4"
+#define VERSION_STRING "4.1.6"
 #endif
 
 #endif // CONFIG_H

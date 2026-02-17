@@ -1478,7 +1478,7 @@ void loop()
     log_i("Writing data to SD card (mandatory logging)... SD status: %s", sysStat.sdCard ? "OK" : "FAIL");
     if (sysStat.sdCard)
     {
-      vHalSdcard_logToSD(&sendData, &sysData, &sysStat, &sensorData_single, &devinfo);
+      vHalSdcard_logToSD(&sendData, &sysData, &sysStat, &sensorData_accumulate, &devinfo);
       log_i("Data logged to SD card successfully with date-based folder structure");
     }
     else
@@ -1755,11 +1755,15 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
       sysData->ntp_server = NTP_SERVER_DEFAULT;
       log_i("Applied default NTP server: %s", sysData->ntp_server.c_str());
     }
+    #ifdef FORCE_TIMEZONE_GMT0
+    sysData->timezone = TZ_DEFAULT;
+    #else
     if (sysData->timezone.length() == 0)
     {
       sysData->timezone = TZ_DEFAULT;
       log_i("Applied default timezone: %s", sysData->timezone.c_str());
     }
+    #endif
   }
   else
   {

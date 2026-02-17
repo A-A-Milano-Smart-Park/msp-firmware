@@ -828,7 +828,11 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
     updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_RETRIEVE_DATETIME);
 
     // Get timezone rule (will be used by configTzTime later)
+    #ifndef FORCE_TIMEZONE_GMT0
     String tzRule = (sysData->timezone.length() > 0) ? sysData->timezone : TZ_DEFAULT;
+    #else
+    String tzRule = TZ_DEFAULT;
+    #endif
     log_i("Using timezone: %s", tzRule.c_str());
 
     // Validate NTP server
