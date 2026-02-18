@@ -1472,8 +1472,8 @@ void loop()
       log_e("Failed to enqueue data for transmission - queue might be full");
     }
 
-    // show the already captured data
-    vMsp_updateDataAndSendEvent(DISP_EVENT_SHOW_MEAS_DATA, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
+    // show the averaged data after transmission
+    vMsp_updateDataAndSendEvent(DISP_EVENT_SHOW_MEAS_DATA, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
     log_i("Data transmission time: %02d:%02d:%02d", sendData.sendTimeInfo.tm_hour, sendData.sendTimeInfo.tm_min, sendData.sendTimeInfo.tm_sec);
     log_i("temp: %.2f, hum: %.2f, pre: %.2f, VOC: %.2f, PM1: %d, PM25: %d, PM10: %d, MICS_CO: %.2f, MICS_NO2: %.2f, MICS_NH3: %.2f, ozone: %.2f, MSP: %d, measurement_count: %d vs %d",
