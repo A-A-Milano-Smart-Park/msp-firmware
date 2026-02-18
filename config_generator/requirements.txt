@@ -1,0 +1,10 @@
+# MSP Firmware Config Generator Requirements
+
+# Per la comunicazione seriale con ESP32
+pyserial>=3.5
+
+# Per il flash dell'ESP32
+esptool>=4.7
+
+# Per scaricare le release da GitHub
+requests>=2.31.0

@@ -454,8 +454,7 @@ void setup()
   measStat.curr_minutes = 0;
   measStat.curr_seconds = 0;
   measStat.curr_total_seconds = 0;
-  measStat.last_transmission_minute = -1; // Initialize to invalid minute
-  measStat.last_transmission_hour = -1;   // Initialize to invalid hour
+  measStat.last_transmission_epoch = 0; // 0 = never transmitted
 
   // STEP 4: Request network connection and wait for NTP sync
   log_i("=== STEP 4: Requesting network connection and NTP sync ===");
@@ -1273,80 +1272,53 @@ void loop()
     }
 
     // Check if it's time to send data
-    // We transmit when: 1) we're at a transmission boundary AND 2) haven't transmitted at this boundary yet
+    // We transmit when:
+    //   1) At a clock-aligned interval boundary (curr_minutes % max_measurements == 0)
+    //      OR enough seconds have elapsed since the last transmission (fallback for missed windows)
+    //   2) Enough measurements have been collected for this cycle
+    //   3) Haven't already transmitted in this boundary window
 
-    // Improved boundary logic: check if current minute is at interval boundary OR enough time has passed since last transmission
-    // IMPORTANT: Use max_measurements (configured interval) NOT avg_measurements (dynamic cycle count)
-    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.max_measurements) == 0); // Standard interval boundary
+    time_t now_epoch = mktime(&timeinfo);
 
-    // Alternative boundary check: if enough time has passed since last transmission (handles hour rollover)
-    bool enough_time_passed = false;
-    if (measStat.last_transmission_minute >= 0) // Only check if we have a previous transmission
-    {
-      int minutes_since_last_tx = 0;
-      if (measStat.curr_minutes > measStat.last_transmission_minute)
-      {
-        // Same hour, minutes increased
-        minutes_since_last_tx = measStat.curr_minutes - measStat.last_transmission_minute;
-      }
-      else if (measStat.curr_minutes < measStat.last_transmission_minute)
-      {
-        // Hour rollover (e.g., from minute 58 to minute 2)
-        minutes_since_last_tx = (60 - measStat.last_transmission_minute) + measStat.curr_minutes;
-      }
-      else
-      {
-        // Same minute as last transmission (curr_minutes == last_transmission_minute)
-        // NEVER allow retransmission at the same minute - this prevents duplicates
-        minutes_since_last_tx = 0;
-      }
-      enough_time_passed = (minutes_since_last_tx >= measStat.max_measurements);
-    }
-    else
-    {
-      // First transmission ever - wait for standard boundary
-      // Do NOT automatically allow transmission on first boot
-      enough_time_passed = false;
-    }
+    // Compute seconds elapsed since last transmission (0 if never transmitted)
+    int32_t seconds_since_last_tx = (measStat.last_transmission_epoch > 0)
+                                    ? (int32_t)(now_epoch - measStat.last_transmission_epoch)
+                                    : 0;
 
-    // Use either standard boundary OR enough time has passed
+    int32_t interval_seconds = (int32_t)(measStat.max_measurements * SEC_IN_MIN);
+
+    // Standard clock-aligned boundary (e.g. minute 0 for hourly, minute 0/30 for 30-min)
+    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.max_measurements) == 0);
+
+    // Fallback: enough seconds have elapsed regardless of minute alignment.
+    // This handles all rollover cases (including 60-min: same minute across hours) and
+    // recovers gracefully if the exact boundary second is missed due to processing delays.
+    bool enough_time_passed = (measStat.last_transmission_epoch > 0) &&
+                              (seconds_since_last_tx >= interval_seconds);
+
     at_transmission_boundary = at_transmission_boundary || enough_time_passed;
 
-    // Prevent duplicate transmissions at same boundary
-    // STRICT: Only transmit once per boundary - check both hour and minute
-    // Get current hour for comparison
+    // Duplicate guard: only transmit once per boundary window.
+    // "Not yet transmitted" if we have never transmitted OR enough seconds have passed
+    // since the last one (i.e. we are in a new window, not the same one).
+    bool boundary_not_transmitted = (measStat.last_transmission_epoch == 0) || enough_time_passed;
+
+    // Measurement count guard: don't fire early (e.g. first boot at minute 0 reads
+    // only 1 sample before the boundary check would trigger).
+    bool enough_measurements = (measStat.measurement_count >= measStat.avg_measurements);
+
     int curr_hour = timeinfo.tm_hour;
-    bool boundary_not_transmitted = (measStat.last_transmission_hour != curr_hour) || (measStat.last_transmission_minute != measStat.curr_minutes);
-
-    // Enhanced logging for boundary logic debugging
-    int minutes_since_last_tx = 0;
-    if (measStat.last_transmission_minute >= 0)
-    {
-      if (measStat.curr_minutes > measStat.last_transmission_minute)
-      {
-        minutes_since_last_tx = measStat.curr_minutes - measStat.last_transmission_minute;
-      }
-      else if (measStat.curr_minutes < measStat.last_transmission_minute)
-      {
-        minutes_since_last_tx = (60 - measStat.last_transmission_minute) + measStat.curr_minutes;
-      }
-      else
-      {
-        // Same minute as last transmission - never allow retransmission
-        minutes_since_last_tx = 0;
-      }
-    }
-
-    log_i("TRANSMISSION CHECK: collected %d/%d measurements, boundary=%s (time %02d:%02d, interval=%d), last_tx=%02d:%02d",
+    log_i("TRANSMISSION CHECK: collected %d/%d measurements, boundary=%s (time %02d:%02d, interval=%d), last_tx_epoch=%lld, secs_since_tx=%d",
           measStat.measurement_count, measStat.avg_measurements,
           at_transmission_boundary ? "YES" : "NO", curr_hour, measStat.curr_minutes, measStat.max_measurements,
-          measStat.last_transmission_hour, measStat.last_transmission_minute);
+          (long long)measStat.last_transmission_epoch, seconds_since_last_tx);
 
-    log_i("BOUNDARY DETAILS: standard_boundary=%s, enough_time_passed=%s, minutes_since_last_tx=%d",
+    log_i("BOUNDARY DETAILS: standard_boundary=%s, enough_time_passed=%s, enough_measurements=%s",
           ((measStat.curr_minutes % measStat.max_measurements) == 0) ? "YES" : "NO",
-          enough_time_passed ? "YES" : "NO", minutes_since_last_tx);
+          enough_time_passed ? "YES" : "NO",
+          enough_measurements ? "YES" : "NO");
 
-    if (at_transmission_boundary && boundary_not_transmitted)
+    if (at_transmission_boundary && boundary_not_transmitted && enough_measurements)
     {
       log_i("All measurements obtained, going to send data...\n");
       mainStateMachine.next_state = SYS_STATE_SEND_DATA; // go to send data state
@@ -1478,7 +1450,7 @@ void loop()
     log_i("Writing data to SD card (mandatory logging)... SD status: %s", sysStat.sdCard ? "OK" : "FAIL");
     if (sysStat.sdCard)
     {
-      vHalSdcard_logToSD(&sendData, &sysData, &sysStat, &sensorData_single, &devinfo);
+      vHalSdcard_logToSD(&sendData, &sysData, &sysStat, &sensorData_accumulate, &devinfo);
       log_i("Data logged to SD card successfully with date-based folder structure");
     }
     else
@@ -1491,17 +1463,17 @@ void loop()
     {
       log_i("Data enqueued successfully for network transmission");
       measStat.data_transmitted = true;                                // Mark data as transmitted for this cycle
-      measStat.last_transmission_minute = measStat.curr_minutes;       // Record the transmission boundary minute
-      measStat.last_transmission_hour = sendData.sendTimeInfo.tm_hour; // Record the transmission hour
-      log_i("Recorded transmission at %02d:%02d to prevent duplicates", measStat.last_transmission_hour, measStat.last_transmission_minute);
+      measStat.last_transmission_epoch = mktime(&sendData.sendTimeInfo); // Record epoch time to prevent duplicates
+      log_i("Recorded transmission epoch %lld (%02d:%02d) to prevent duplicates",
+            (long long)measStat.last_transmission_epoch, sendData.sendTimeInfo.tm_hour, sendData.sendTimeInfo.tm_min);
     }
     else
     {
       log_e("Failed to enqueue data for transmission - queue might be full");
     }
 
-    // show the already captured data
-    vMsp_updateDataAndSendEvent(DISP_EVENT_SHOW_MEAS_DATA, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
+    // show the averaged data after transmission
+    vMsp_updateDataAndSendEvent(DISP_EVENT_SHOW_MEAS_DATA, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
     log_i("Data transmission time: %02d:%02d:%02d", sendData.sendTimeInfo.tm_hour, sendData.sendTimeInfo.tm_min, sendData.sendTimeInfo.tm_sec);
     log_i("temp: %.2f, hum: %.2f, pre: %.2f, VOC: %.2f, PM1: %d, PM25: %d, PM10: %d, MICS_CO: %.2f, MICS_NO2: %.2f, MICS_NH3: %.2f, ozone: %.2f, MSP: %d, measurement_count: %d vs %d",
@@ -1518,7 +1490,7 @@ void loop()
     log_i("TRANSMISSION ATTEMPT COMPLETE: Resetting measurement_count from %d to 0", measStat.measurement_count);
     measStat.measurement_count = 0;
     measStat.data_transmitted = false; // Reset flag for new measurement cycle
-    // Note: last_transmission_minute is NOT reset here - it stays to prevent duplicates at the same boundary
+    // Note: last_transmission_epoch is NOT reset here - it stays to prevent duplicates in the same boundary window
 
     // Reset all sensor data (both single and accumulated) for clean start of next cycle
     log_i("Resetting all sensor data for next measurement cycle");
@@ -1659,8 +1631,7 @@ void vMspInit_MeasInfo(void)
   measStat.avg_measurements = 1;
   measStat.isPmsAwake = false;
   measStat.isSensorDataAvailable = false;
-  measStat.last_transmission_minute = -1; // Initialize to invalid minute
-  measStat.last_transmission_hour = -1;   // Initialize to invalid hour
+  measStat.last_transmission_epoch = 0; // 0 = never transmitted
 }
 
 /**
@@ -1755,11 +1726,15 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
       sysData->ntp_server = NTP_SERVER_DEFAULT;
       log_i("Applied default NTP server: %s", sysData->ntp_server.c_str());
     }
+    #ifdef FORCE_TIMEZONE_GMT0
+    sysData->timezone = TZ_DEFAULT;
+    #else
     if (sysData->timezone.length() == 0)
     {
       sysData->timezone = TZ_DEFAULT;
       log_i("Applied default timezone: %s", sysData->timezone.c_str());
     }
+    #endif
   }
   else
   {

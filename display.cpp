@@ -374,7 +374,7 @@ void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData, systemSt
   char sensorStringData[SENSOR_DATA_STR_FMT_LEN] = {0};
 
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
-  if (p_tData->status.MICS6814Sensor)
+  if ((p_tData->status.MICS6814Sensor) || (p_tData->status.MICS4514Sensor))
   {
     vGeneric_dspFloatToComma(p_tData->pollutionData.carbonMonoxide, sensorStringData, sizeof(sensorStringData));
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
@@ -631,10 +631,7 @@ void vMsp_updateDataAndSendEvent(displayEvents_t event,
 
   vMspOs_takeDataAccessMutex();
 
-  if (event == DISP_EVENT_SHOW_MEAS_DATA)
-  {
-    localDisplayData.sensorData = *sensorData;
-  }
+  localDisplayData.sensorData = *sensorData; // Always copy so fallback SHOW_MEAS_DATA has valid status flags
   localDisplayData.devInfo = *devInfo;
   localDisplayData.measStat = *measStat;
   localDisplayData.sysData = *sysData;

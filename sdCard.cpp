@@ -48,7 +48,7 @@
 // CSV Header
 #define CSV_HEADER "recordedAt;date;time;year;month;temp;hum;PM1;PM2_5;PM10;pres;radiation;nox;co;nh3;o3;voc;msp"
 
-// Log file size and rotation constants  
+// Log file size and rotation constants
 #define LOG_MAX_SIZE 1000000
 #define RETRY_ATTEMPTS 3
 
@@ -397,12 +397,12 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
   }
   log_i("compensation[] = *%.3f*, *%.3f*, *%.6f*", p_tData->compParams.currentHumidity, p_tData->compParams.currentTemperature, p_tData->compParams.currentPressure);
 
-  // Parse Use Modem
-  #if (FORCE_GSM_NETWORK_CONNECTION == 1)
+// Parse Use Modem
+#if (FORCE_GSM_NETWORK_CONNECTION == 1)
   sysStat->use_modem = true;
-  #else
+#else
   sysStat->use_modem = config[JSON_KEY_USE_MODEM] | false;
-  #endif
+#endif
   log_i("useModem = *%s*", (sysStat->use_modem) ? STR_TRUE : STR_FALSE);
 
   // Parse Modem APN
@@ -477,8 +477,8 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
   // Parse Gas Sensor Type
   sysStat->gasSensorType = config[JSON_KEY_GAS_SENSOR_TYPE] | GAS_SENSOR_MICS6814; // Default to MICS6814
   log_i("gasSensorType = %d (%s)", sysStat->gasSensorType,
-        (sysStat->gasSensorType == GAS_SENSOR_MICS6814) ? "MICS6814" :
-        (sysStat->gasSensorType == GAS_SENSOR_MICS4514) ? "MICS4514" : "Unknown");
+        (sysStat->gasSensorType == GAS_SENSOR_MICS6814) ? "MICS6814" : (sysStat->gasSensorType == GAS_SENSOR_MICS4514) ? "MICS4514"
+                                                                                                                       : "Unknown");
 
   return outcome;
 }
@@ -646,19 +646,45 @@ bool bHalSdcard_writeConfig(deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, 
   String wifiPowerStr;
   switch (p_tDev->wifipow)
   {
-    case WIFI_POWER_MINUS_1dBm: wifiPowerStr = "-1dBm"; break;
-    case WIFI_POWER_2dBm: wifiPowerStr = "2dBm"; break;
-    case WIFI_POWER_5dBm: wifiPowerStr = "5dBm"; break;
-    case WIFI_POWER_7dBm: wifiPowerStr = "7dBm"; break;
-    case WIFI_POWER_8_5dBm: wifiPowerStr = "8.5dBm"; break;
-    case WIFI_POWER_11dBm: wifiPowerStr = "11dBm"; break;
-    case WIFI_POWER_13dBm: wifiPowerStr = "13dBm"; break;
-    case WIFI_POWER_15dBm: wifiPowerStr = "15dBm"; break;
-    case WIFI_POWER_17dBm: wifiPowerStr = "17dBm"; break;
-    case WIFI_POWER_18_5dBm: wifiPowerStr = "18.5dBm"; break;
-    case WIFI_POWER_19dBm: wifiPowerStr = "19dBm"; break;
-    case WIFI_POWER_19_5dBm: wifiPowerStr = "19.5dBm"; break;
-    default: wifiPowerStr = "17dBm"; break;
+  case WIFI_POWER_MINUS_1dBm:
+    wifiPowerStr = "-1dBm";
+    break;
+  case WIFI_POWER_2dBm:
+    wifiPowerStr = "2dBm";
+    break;
+  case WIFI_POWER_5dBm:
+    wifiPowerStr = "5dBm";
+    break;
+  case WIFI_POWER_7dBm:
+    wifiPowerStr = "7dBm";
+    break;
+  case WIFI_POWER_8_5dBm:
+    wifiPowerStr = "8.5dBm";
+    break;
+  case WIFI_POWER_11dBm:
+    wifiPowerStr = "11dBm";
+    break;
+  case WIFI_POWER_13dBm:
+    wifiPowerStr = "13dBm";
+    break;
+  case WIFI_POWER_15dBm:
+    wifiPowerStr = "15dBm";
+    break;
+  case WIFI_POWER_17dBm:
+    wifiPowerStr = "17dBm";
+    break;
+  case WIFI_POWER_18_5dBm:
+    wifiPowerStr = "18.5dBm";
+    break;
+  case WIFI_POWER_19dBm:
+    wifiPowerStr = "19dBm";
+    break;
+  case WIFI_POWER_19_5dBm:
+    wifiPowerStr = "19.5dBm";
+    break;
+  default:
+    wifiPowerStr = "17dBm";
+    break;
   }
   config[JSON_KEY_WIFI_POWER] = wifiPowerStr;
 
@@ -692,7 +718,11 @@ bool bHalSdcard_writeConfig(deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, 
 
   // Time configuration
   config[JSON_KEY_NTP_SERVER] = p_tSysData->ntp_server;
+#ifdef FORCE_TIMEZONE_GMT0
+  config[JSON_KEY_TIMEZONE] = TZ_DEFAULT;
+#else
   config[JSON_KEY_TIMEZONE] = p_tSysData->timezone;
+#endif
 
   // System configuration
   config[JSON_KEY_FW_AUTO_UPGRADE] = (p_tSys->fwAutoUpgrade != 0);
@@ -1059,20 +1089,20 @@ uint8_t addToLog(const char *path, const char *oldpath, const char *errpath, Str
  * @brief Create date-based log path (YYYY/MM/DD.csv format)
  * Creates folder structure: /YYYY/MM/DD.csv
  *************************************************************/
-String sHalSdcard_createDateBasedLogPath(const struct tm* timeInfo)
+String sHalSdcard_createDateBasedLogPath(const struct tm *timeInfo)
 {
   char yearStr[FOLDER_NAME_LEN];
   char monthStr[FOLDER_NAME_LEN];
   char dayStr[FOLDER_NAME_LEN]; // Generous buffer sizes to avoid any truncation warnings
-  
+
   // Format components with leading zeros
   snprintf(yearStr, sizeof(yearStr), YEAR_FORMAT, timeInfo->tm_year + BASE_YEAR_OFFSET);
   snprintf(monthStr, sizeof(monthStr), MONTH_FORMAT, timeInfo->tm_mon + MONTH_OFFSET);
   snprintf(dayStr, sizeof(dayStr), DAY_FORMAT, timeInfo->tm_mday);
-  
+
   // Create path: /YYYY/MM/DD.csv
   String logPath = PATH_SEPARATOR + String(yearStr) + PATH_SEPARATOR + String(monthStr) + PATH_SEPARATOR + String(dayStr) + LOG_FILE_EXTENSION;
-  
+
   log_i("Generated log path: %s", logPath.c_str());
   return logPath;
 }
@@ -1080,14 +1110,14 @@ String sHalSdcard_createDateBasedLogPath(const struct tm* timeInfo)
 /**************************************************************
  * @brief Ensure directory path exists, create if necessary
  *************************************************************/
-bool bHalSdcard_ensureDirectoryExists(const String& dirPath)
+bool bHalSdcard_ensureDirectoryExists(const String &dirPath)
 {
   if (SD.exists(dirPath))
   {
     log_v("Directory already exists: %s", dirPath.c_str());
     return true;
   }
-  
+
   log_i("Creating directory: %s", dirPath.c_str());
   if (SD.mkdir(dirPath))
   {
@@ -1108,27 +1138,27 @@ void vHalSdcard_logToSD(send_data_t *data, systemData_t *p_tSysData, systemStatu
 
   // Create date-based log path
   String logPath = sHalSdcard_createDateBasedLogPath(&data->sendTimeInfo);
-  
+
   // Extract directory path from full file path
   int lastSlashIndex = logPath.lastIndexOf(*PATH_SEPARATOR);
   String dirPath = logPath.substring(0, lastSlashIndex);
-  
+
   // Ensure year and month directories exist
   char yearStr[FOLDER_NAME_LEN];
   char monthStr[FOLDER_NAME_LEN]; // Generous buffer sizes to avoid any truncation warnings
   snprintf(yearStr, sizeof(yearStr), YEAR_FORMAT, data->sendTimeInfo.tm_year + BASE_YEAR_OFFSET);
   snprintf(monthStr, sizeof(monthStr), MONTH_FORMAT, data->sendTimeInfo.tm_mon + MONTH_OFFSET);
-  
+
   String yearPath = PATH_SEPARATOR + String(yearStr);
   String monthPath = yearPath + PATH_SEPARATOR + String(monthStr);
-  
+
   // Create directories step by step
   if (!bHalSdcard_ensureDirectoryExists(yearPath))
   {
     log_e("Failed to create year directory: %s", yearPath.c_str());
     return;
   }
-  
+
   if (!bHalSdcard_ensureDirectoryExists(monthPath))
   {
     log_e("Failed to create month directory: %s", monthPath.c_str());
@@ -1136,12 +1166,11 @@ void vHalSdcard_logToSD(send_data_t *data, systemData_t *p_tSysData, systemStatu
   }
 
   strftime(p_tSysData->Date, sizeof(p_tSysData->Date), DATE_FORMAT, &data->sendTimeInfo); // Formatting date as DD/MM/YYYY
-  strftime(p_tSysData->Time, sizeof(p_tSysData->Time), TIME_FORMAT, &data->sendTimeInfo);       // Formatting time as HH:MM:SS
+  strftime(p_tSysData->Time, sizeof(p_tSysData->Time), TIME_FORMAT, &data->sendTimeInfo); // Formatting time as HH:MM:SS
 
   String logvalue = "";
   char timeFormat[TIMEFORMAT_LEN] = {0};
-  if (p_tSys->datetime)
-    strftime(timeFormat, sizeof(timeFormat), ISO_DATETIME_FORMAT, &data->sendTimeInfo); // formatting date&time in TZ format
+  strftime(timeFormat, sizeof(timeFormat), ISO_DATETIME_FORMAT, &data->sendTimeInfo); // formatting date&time in TZ format
 
   // Data is layed out as follows:
   // "recordedAt;date;time;temp;hum;PM1;PM2_5;PM10;pres;radiation;nox;co;nh3;o3;voc;msp"
@@ -1189,17 +1218,17 @@ void vHalSdcard_logToSD(send_data_t *data, systemData_t *p_tSysData, systemStatu
   }
   logvalue += FIRST_DATA_COLUMN_SEPARATOR;
   logvalue += FIRST_DATA_COLUMN_SEPARATOR; // for "radiation"
-  if (p_tData->status.MICS6814Sensor)
+  if ((p_tData->status.MICS6814Sensor) || (p_tData->status.MICS4514Sensor))
   {
     logvalue += vGeneric_floatToComma(data->MICS_NO2);
   }
   logvalue += FIRST_DATA_COLUMN_SEPARATOR;
-  if (p_tData->status.MICS6814Sensor)
+  if ((p_tData->status.MICS6814Sensor) || (p_tData->status.MICS4514Sensor))
   {
     logvalue += vGeneric_floatToComma(data->MICS_CO);
   }
   logvalue += FIRST_DATA_COLUMN_SEPARATOR;
-  if (p_tData->status.MICS6814Sensor)
+  if ((p_tData->status.MICS6814Sensor) || (p_tData->status.MICS4514Sensor))
   {
     logvalue += vGeneric_floatToComma(data->MICS_NH3);
   }
@@ -1218,7 +1247,7 @@ void vHalSdcard_logToSD(send_data_t *data, systemData_t *p_tSysData, systemStatu
 
   // Simple append-based logging for date-based files
   bool needsHeader = !SD.exists(logPath);
-  
+
   File logFile = SD.open(logPath, FILE_APPEND);
   if (!logFile)
   {
@@ -1226,18 +1255,18 @@ void vHalSdcard_logToSD(send_data_t *data, systemData_t *p_tSysData, systemStatu
     vMsp_sendNetworkDataToDisplay(p_tDev, p_tSys, DISP_EVENT_SD_CARD_LOG_ERROR);
     return;
   }
-  
+
   // Add header if this is a new file
   if (needsHeader)
   {
     logFile.println(CSV_HEADER);
     log_i("CSV header added to new log file: %s", logPath.c_str());
   }
-  
+
   // Append the data
   logFile.println(logvalue);
   logFile.close();
-  
+
   log_i("SD Card log file updated successfully: %s", logPath.c_str());
 }
 
@@ -1281,7 +1310,6 @@ uint8_t vHalSdcard_periodicCheck(systemStatus_t *p_tSys, deviceNetworkInfo_t *p_
 {
   static uint8_t previousSdStatus = UNINITIALIZED_MARKER; // Use as uninitialized marker
   uint8_t currentSdStatus = false;
-  
 
   // Initialize previousSdStatus based on actual system status on first call
   if (previousSdStatus == UNINITIALIZED_MARKER)
@@ -1348,7 +1376,6 @@ uint8_t vHalSdcard_periodicCheck(systemStatus_t *p_tSys, deviceNetworkInfo_t *p_
 
   // Update system status
   p_tSys->sdCard = currentSdStatus;
-
 
   return currentSdStatus;
 }

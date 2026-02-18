@@ -154,7 +154,7 @@ print-core-version:
 	@echo $$($(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml core list | grep "$(CORE_NAME)" | cut -f2 -d' ') ; \
 
 env: $(BINDIR)/arduino-cli $(BINDIR)/arduino-lint $(ETCDIR)/arduino-cli.yaml
-	mkdir -p $(BUILDDIR)
+	mkdir -p $(BUILDDIR) $(LOGDIR)
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml core update-index
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml core install $(CORE)
 ifdef LIBRARIES
