@@ -7,7 +7,10 @@ A cross-platform GUI tool to generate config_v4.json files and flash ESP32
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog, scrolledtext
 import json
+import os
 import threading
+import zipfile
+import tempfile
 from pathlib import Path
 
 # Import moduli locali
@@ -183,9 +186,9 @@ class ConfigGeneratorGUI:
         ttk.Button(firmware_frame, text="📥 Download Latest Release from GitHub",
                   command=self.download_latest_firmware, width=40).pack(pady=5)
 
-        ttk.Label(firmware_frame, text="o").pack(pady=2)
+        ttk.Label(firmware_frame, text="or", foreground="gray").pack(pady=2)
 
-        ttk.Button(firmware_frame, text="📂 Select Local .bin File",
+        ttk.Button(firmware_frame, text="📂 Load Local Firmware (.zip or .bin)",
                   command=self.select_local_firmware, width=40).pack(pady=5)
 
         self.firmware_label = ttk.Label(firmware_frame, text="Nessun firmware selezionato",
@@ -620,9 +623,6 @@ class ConfigGeneratorGUI:
         if file_path:
             if file_path.endswith('.zip'):
                 # Estrai il ZIP e trova i file
-                import zipfile
-                import tempfile
-
                 try:
                     extract_dir = tempfile.mkdtemp(prefix="msp_firmware_")
                     with zipfile.ZipFile(file_path, 'r') as zip_ref:
