@@ -19,15 +19,17 @@ SemaphoreHandle_t dataAccessMutex = NULL;
 
 /**************************************************
  * @brief Initializes the mutex for data access.
- *
+ * @return true on success, false if allocation failed.
  **************************************************/
-void vMspOs_initDataAccessMutex()
+bool bMspOs_initDataAccessMutex()
 {
     dataAccessMutex = xSemaphoreCreateMutex();
     if (dataAccessMutex == NULL)
     {
-        Serial.println("Failed to create mutex!");
+        Serial.println("FATAL: failed to create data access mutex!");
+        return false;
     }
+    return true;
 }
 
 /**********************************************************
@@ -38,7 +40,10 @@ void vMspOs_takeDataAccessMutex()
 {
     if (dataAccessMutex != NULL)
     {
-        xSemaphoreTake(dataAccessMutex, portMAX_DELAY); // Wait indefinitely
+        if (xSemaphoreTake(dataAccessMutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+        {
+            log_e("dataAccessMutex timeout — possible deadlock!");
+        }
     }
 }
 

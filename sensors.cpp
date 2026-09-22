@@ -207,6 +207,12 @@ void vHalSensor_printMeasurementsOnSerial(send_data_t *data, sensorData_t *p_tPt
     log_i("CO: %.2f ug/m3", data->MICS_CO);
     log_i("NH3: %.2f ug/m3", data->MICS_NH3);
   }
+  if (p_tPtr->status.MSP1Sensor)
+  {
+    // Unitless ratio, not a ug/m3 concentration — see the GAS_SENSOR_MSP1 case
+    // in SYS_STATE_SEND_DATA.
+    log_i("Rno2/R0: %.4f", data->MICS_NO2);
+  }
   log_i("Measurements logged successfully");
 }
 
@@ -246,39 +252,17 @@ void vHalSensor_performAverages(errorVars_t *p_tErr, sensorData_t *p_tData, devi
   runs = p_tMeas->measurement_count - p_tErr->PMSfails;
   if (p_tData->status.PMS5003Sensor && (runs > 0))
   {
-    float pmValue = 0.0f;
-
-    pmValue = p_tData->airQualityData.particleMicron1 / runs;
-
-    if ((pmValue - (int32_t) pmValue) >= ROUNDING_THRESHOLD)
-    {
-      p_tData->airQualityData.particleMicron1 = (int32_t) pmValue + 1;
-    }
-    else
-    {
-      p_tData->airQualityData.particleMicron1 = (int32_t) pmValue;
-    }
-
-    pmValue = p_tData->airQualityData.particleMicron25 / runs;
-
-    if ((pmValue - (int32_t) pmValue) >= ROUNDING_THRESHOLD)
-    {
-      p_tData->airQualityData.particleMicron25 = (int32_t) pmValue + 1;
-    }
-    else
-    {
-      p_tData->airQualityData.particleMicron25 = (int32_t) pmValue;
-    }
-
-    pmValue = p_tData->airQualityData.particleMicron10 / runs;
-    if ((pmValue - (int32_t) pmValue) >= ROUNDING_THRESHOLD)
-    {
-      p_tData->airQualityData.particleMicron10 = (int32_t) pmValue + 1;
-    }
-    else
-    {
-      p_tData->airQualityData.particleMicron10 = (int32_t) pmValue;
-    }
+    /* The (float) cast is load-bearing: the accumulators are int32_t and runs is
+     * short, so without it the division was integer and the mean was truncated
+     * toward zero — a bias of -(runs-1)/(2*runs), i.e. -0.48 ug/m3 at the default
+     * 30 measurements, on each of the three channels. It also made the half-up
+     * rounding block that used to sit here dead code: the fractional part of an
+     * integer quotient is always exactly 0, so the >= 0.5 test never fired.
+     * lroundf() rounds half away from zero, which for a non-negative
+     * concentration is the half-up the old block was aiming for. */
+    p_tData->airQualityData.particleMicron1 = lroundf((float)p_tData->airQualityData.particleMicron1 / runs);
+    p_tData->airQualityData.particleMicron25 = lroundf((float)p_tData->airQualityData.particleMicron25 / runs);
+    p_tData->airQualityData.particleMicron10 = lroundf((float)p_tData->airQualityData.particleMicron10 / runs);
   }
   else if (p_tData->status.PMS5003Sensor)
   {
@@ -362,6 +346,26 @@ void vHalSensor_performAverages(errorVars_t *p_tErr, sensorData_t *p_tData, devi
   {
     p_tData->status.O3Sensor = false;
     p_tErr->senserrs[SENS_STAT_O3] = true;
+  }
+
+  // MSP1 (MICS-2714): pollutionData.nitrogenDioxide holds the sum of the
+  // per-measurement Rno2/R0 ratios (accumulated with += in
+  // SYS_STATE_READ_SENSORS, same convention as MICS6814/4514). MSP1 read
+  // failures are counted in MICSfails, so the divisor is the same expression;
+  // the MICS branches above cannot double-divide it because their own status
+  // flags are false whenever MSP1 is the configured gas sensor.
+  runs = p_tMeas->measurement_count - p_tErr->MICSfails;
+  if (p_tData->status.MSP1Sensor && (runs > 0))
+  {
+    p_tData->pollutionData.nitrogenDioxide /= runs;
+    log_i("MSP1: Rno2/R0 average = %.4f over %d successful measurements",
+          p_tData->pollutionData.nitrogenDioxide, runs);
+  }
+  else if (p_tData->status.MSP1Sensor)
+  {
+    p_tData->pollutionData.nitrogenDioxide = 0.0f;
+    p_tData->status.MSP1Sensor = false;
+    p_tErr->senserrs[SENS_STAT_MSP1] = true;
   }
 }
 

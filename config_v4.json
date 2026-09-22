@@ -8,6 +8,7 @@
     "average_measurements": 30,
     "sea_level_altitude": 122.00,
     "upload_server": "",
+    "gas_sensor_type": 2,
     "mics_calibration_values": {
       "RED": 955,
       "OX": 900,
@@ -23,18 +24,40 @@
       "compT": 1.352,
       "compP": 0.0132
     },
+    "msp1_params": {
+      "r0_no2_ohm": 2000,
+      "rheat_temp_max_c": 220,
+      "rheat_tamb_ohm": 66,
+      "rheat_tamb_ref_c": 20,
+      "kr": 0.043,
+      "ldo_index": 5,
+      "avdd_ext_mv": 3300,
+      "dac_vdd_mv": 3300,
+      "ramp_step_delay_ms": 500
+    },
     "use_modem": false,
     "modem_apn": "",
     "ntp_server": "pool.ntp.org",
     "timezone": "GMT0",
-    "fw_auto_upgrade": true,
-    "gas_sensor_type": 0
+    "fw_auto_upgrade": true
   },
   "help": {
     "wifi_power": "Accepted values: -1, 2, 5, 7, 8.5, 11, 13, 15, 17, 18.5, 19, 19.5 dBm",
     "average_measurements": "Accepted values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60",
     "sea_level_altitude": "Value in meters, must be changed according to device location. 122.0 meters is the average altitude in Milan, Italy",
     "timezone": "Standard tz timezone definition. More details at https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html",
-    "gas_sensor_type": "Gas sensor type: 0 = MICS6814, 1 = MICS4514 (DFRobot SEN0377)"
+    "gas_sensor_type": "Gas sensor type: 0 = MICS6814, 1 = MICS4514 (DFRobot SEN0377)",
+    "msp1_params": [
+      "MSP1 (MICS-2714) heater/NO2 calibration.",
+      "r0_no2_ohm: NO2 baseline resistance.",
+      "rheat_temp_max_c: target heater operating temperature.",
+      "rheat_tamb_ohm: heater resistance at the Tamb reference point.",
+      "rheat_tamb_ref_c: temperature at which rheat_tamb_ohm was measured. Accepted range -40 to 85 C and below rheat_temp_max_c, otherwise 20 C is used.",
+      "kr: heater resistance temperature coefficient (ohm/C).",
+      "ldo_index: NAU7802 LDO/AVDD (ADC reference) 0=2.4V 1=2.7V 2=3.0V 3=3.3V 4=3.6V 5=3.9V 6=4.2V 7=4.5V 8=EXTERNAL (LDO off, AVDD supplied externally, value from avdd_ext_mv).",
+      "avdd_ext_mv: externally supplied NAU7802 AVDD in mV, used as ADC reference ONLY when ldo_index=8 (EXTERNAL). Accepted range 2400-5500.",
+      "dac_vdd_mv: MCP4725 DAC supply/reference VDD in mV, ALWAYS taken from this value. Accepted range 2700-5500.",
+      "ramp_step_delay_ms: delay between heater soft-start ramp steps in ms. Accepted range 0-5000, above 5000 the default 500 is used. The ramp is 8 geometric steps, total ramp time = 8 x this value."
+    ]
   }
 }

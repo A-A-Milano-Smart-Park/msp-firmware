@@ -143,13 +143,48 @@ void vHalDisplay_drawOzoneSensorData(sensorData_t *p_tData,systemStatus_t *statP
 void vHalDisplay_drawMspIndexData(sensorData_t *p_tData,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
 
 /******************************************************************************************
- * @brief Update display status with network events
- * 
- * @param devInfo Device network info structure
- * @param sysStatus System status structure  
- * @param event Display event to show
+ * @brief draws the current date/time on the display, read fresh from the system clock.
+ *
+ * @param statPtr
+ * @param devinfoPtr
+ * @param secdelay
  ******************************************************************************************/
-void updateDisplayStatus(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus, displayEvents_t event);
+void vHalDisplay_drawCurrentDateTime(systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+
+/******************************************************************************************
+ * @brief MSP1 pages (shown when GAS_SENSOR_MSP1 is selected, or exclusively when
+ *        MSP1_DEBUG_ENABLE is defined in config.h):
+ *        - AdcSensor:  NAU7802 CH0 raw and averaged sensor voltage
+ *        - HeaterDac:  NAU7802 CH1 heater voltage/current, MCP4725 setpoint/VDAC
+ *        - Rno2:       NO2 sensing resistance, baseline R0 and Rno2/R0 ratio
+ *
+ * @param statPtr
+ * @param devinfoPtr
+ * @param secdelay   seconds the screen stays on the display
+ ******************************************************************************************/
+void vHalDisplay_drawMsp1AdcSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawMsp1Rno2Data(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+
+/******************************************************************************************
+ * @brief Update display status with network events
+ *
+ * @param devInfo Device network info structure
+ * @param sysStatus System status structure
+ * @param event Display event to show
+ * @param sysData Optional system data (e.g. Date/Time) — NULL if not needed by the event
+ ******************************************************************************************/
+void updateDisplayStatus(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus, displayEvents_t event, systemData_t *sysData = NULL);
+
+/******************************************************************************************
+ * @brief draws the current date and time on the U8G2 display
+ *
+ * @param p_tSysData system data structure containing Date and Time strings
+ * @param statPtr    system status structure
+ * @param devinfoPtr device network info structure
+ * @param secdelay   seconds to show the screen
+ ******************************************************************************************/
+void vHalDisplay_drawDateTime(systemData_t *p_tSysData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
 
 /******************************************************************************************
  * @brief Updates display data and sends event to display task queue

@@ -18,8 +18,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
-// Mutex handle
-void vMspOs_initDataAccessMutex();
+bool bMspOs_initDataAccessMutex();
 void vMspOs_takeDataAccessMutex();
 void vMspOs_giveDataAccessMutex();
 

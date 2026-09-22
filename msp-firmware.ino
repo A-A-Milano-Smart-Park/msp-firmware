@@ -39,6 +39,9 @@
 // OLED display library
 #include <U8g2lib.h>
 
+// Include MSP1 libraries
+#include "msp1.h"
+
 // --local dependency includes  --
 #include "shared_values.h"
 #include "display.h"
@@ -55,10 +58,9 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "freertos/event_groups.h"
+#include "esp_task_wdt.h"
 
-// Hardware UART definitions. Modes: UART0=0(debug out); UART1=1; UART2=2
-
-HardwareSerial pmsSerial(2);
+HardwareSerial pmsSerial(PMS_UART_NUM);
 
 // ------------------------------- DEFINES -----------------------------------------------------------------------------
 
@@ -69,10 +71,6 @@ static Bsec bme680;
 
 // -- PMS5003 sensor instance
 static PMS pms(pmsSerial);
-
-// -- MICS4514 sensor constants (from DFRobot library)
-#define MICS4514_WARMUP_TIME_MIN 2 // Minimum warmup time in minutes
-#define MICS4514_I2C_ADDR 0x75     // Default I2C address
 
 // -- MICS6814 sensors instances
 static MiCS6814 gas;                                        // MICS6814 sensor instance
@@ -128,16 +126,35 @@ void vMsp_scanI2CDevices(void);
 
 void Msp_getSystemStatus(systemStatus_t *stat);
 
+int32_t s32Msp_snapToHourDivisor(int32_t avg);
+
 //*******************************************************************************************************************************
 
 void Msp_getSystemStatus(systemStatus_t *stat)
 {
-
   vMspOs_takeDataAccessMutex();
-
   memcpy(stat, &sysStat, sizeof(systemStatus_t));
-
   vMspOs_giveDataAccessMutex();
+}
+
+/*!< Transmission boundaries are anchored to minute 00 of every hour, so the measurement
+     interval must be an integer divisor of 60 (60, 30, 20, 15, 10, 6, 5, 4, 3, 2, 1).
+     Snaps invalid values down to the nearest valid divisor. */
+int32_t s32Msp_snapToHourDivisor(int32_t avg)
+{
+  if (avg < AVG_MEASUREMENTS_MIN)
+  {
+    return AVG_MEASUREMENTS_MIN;
+  }
+  if (avg > MIN_IN_HOUR)
+  {
+    return MIN_IN_HOUR;
+  }
+  while ((MIN_IN_HOUR % avg) != 0)
+  {
+    avg--;
+  }
+  return avg;
 }
 
 /******************************************************************************************************************/
@@ -154,9 +171,13 @@ void setup()
 
   vMsp_setGpioPins();
 
-  vMspOs_initDataAccessMutex(); // Create the OS mutex for data access
+  if (!bMspOs_initDataAccessMutex())
+  {
+    Serial.println("FATAL: mutex init failed — halting");
+    while (true) { vTaskDelay(pdMS_TO_TICKS(1000)); }
+  }
 
-  // init the sensor data structure /status / offset values with defualt values
+  // Initialize sensor data structures, network parameters, and defaults
   vMspInit_sensorStatusAndData(&sensorData_accumulate);
 
   // init device network parameters
@@ -173,6 +194,7 @@ void setup()
 
   // Initialize the serial port and I2C for the display
   vHalDisplay_initSerialAndI2c();
+  Wire.setTimeOut(2000); // prevent indefinite hang on I2C bus stuck
 
 #ifdef ENABLE_I2C_SCANNER
   // Scan I2C bus for connected devices
@@ -195,96 +217,95 @@ void setup()
   vMsp_updateDataAndSendEvent(DISP_EVENT_DEVICE_BOOT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
 #ifdef VERSION_STRING
-  log_i("ver was defined at compile time.\n");
+  log_i("ver was defined at compile time.");
 #else
-  log_i("ver is the default.\n");
+  log_i("ver is the default.");
 #endif
 #ifdef API_SECRET_SALT
-  log_i("api_secret_salt was defined at compile time.\n");
+  log_i("api_secret_salt was defined at compile time.");
 #else
-  log_i("api_secret_salt is the default.\n");
+  log_i("api_secret_salt is the default.");
 #endif
   //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-  // STEP 0: OTA Firmware Validation and Management
+  // STEP 0: OTA firmware validation
   log_i("=== STEP 0: OTA Firmware Validation ===");
   vHalFirmware_printOTAInfo();
-
-  // Validate current firmware after boot
-  if (bHalFirmware_validateCurrentFirmware())
-  {
-    log_i("Current firmware validated successfully");
-  }
-  else
+  if (!bHalFirmware_validateCurrentFirmware())
   {
     log_e("Current firmware validation failed");
-    // Could implement rollback logic here if needed
   }
 
-  // STEP 1: Single SD Card Configuration Reading
-  log_i("=== STEP 1: Loading complete system configuration from SD card ===");
+  // STEP 1: Load complete system configuration from SD card
+  log_i("=== STEP 1: Loading system configuration from SD card ===");
   vHalSdcard_readSD(&sysStat, &devinfo, &sensorData_accumulate, &measStat, &sysData);
 
   // Phase 2: Check for downloaded firmware and apply update if newer
-  if (SD.exists("/firmware.bin"))
+  if (SD.exists(FIRMWARE_UPDATE_FILE_PATH))
   {
     log_i("Downloaded firmware file found - checking for update");
-    if (bHalFirmware_checkAndApplyPendingUpdate("/firmware.bin"))
+    if (bHalFirmware_checkAndApplyPendingUpdate(FIRMWARE_UPDATE_FILE_PATH))
     {
-      log_i("Firmware update applied successfully");
-    }
-    else
-    {
-      log_w("No firmware update needed or update failed - cleaning up file");
+      log_w("No firmware update applied from firmware.bin");
     }
     // Always remove firmware file after processing
-    if (SD.remove("/firmware.bin"))
+    if (SD.remove(FIRMWARE_UPDATE_FILE_PATH))
     {
       log_i("Firmware file cleaned up successfully");
     }
     else
     {
-      log_w("Failed to remove firmware.bin file");
+      log_w("Failed to remove firmware.bin");
     }
   }
 
   // STEP 2: Fill system configuration with SD data or defaults
-  log_i("=== STEP 2: Configuring system with loaded data or defaults ===");
+  log_i("=== STEP 2: Configuring system from SD data or defaults ===");
   vMspInit_configureSystemFromSD(&sysData, &sysStat, &devinfo, &measStat);
 
-  // Debug: Check final configuration status
-  log_i("Final Configuration Status:");
-  log_i("  SD Card: %s", sysStat.sdCard ? "OK" : "FAILED");
-  log_i("  Config File: %s", sysStat.configuration ? "OK" : "FAILED");
-  log_i("  WiFi SSID: %s", devinfo.ssid.c_str());
-  log_i("  Server: %s", sysData.server.c_str());
-  log_i("  *** MEASUREMENT CONFIG: avg_measurements=%d, max_measurements=%d ***", measStat.avg_measurements, measStat.max_measurements);
-  log_i("  Use Modem: %s", sysStat.use_modem ? "YES" : "NO");
-  log_i("  Firmware Auto-Upgrade: %s", sysStat.fwAutoUpgrade ? "ENABLED" : "DISABLED");
+  log_i("Config summary: SD=%s file=%s SSID=%s server=%s avg=%d modem=%s fwUpgrade=%s",
+        sysStat.sdCard ? "OK" : "FAIL",
+        sysStat.configuration ? "OK" : "FAIL",
+        devinfo.ssid.c_str(),
+        sysData.server.c_str(),
+        measStat.avg_measurements,
+        sysStat.use_modem ? "YES" : "NO",
+        sysStat.fwAutoUpgrade ? "YES" : "NO");
 
-  // Firmware update tests will be run after network connection is established
-
-  // STEP 3: Start network task with complete configuration
+  // STEP 3: Start the network task with complete configuration
   log_i("=== STEP 3: Starting network task ===");
   createNetworkEvents();
   initSendDataOp(&sysData, &sysStat, &devinfo);
+  vTaskDelay(pdMS_TO_TICKS(2000)); // allow network task to start
 
   // Wait for network task to initialize
-  vTaskDelay(pdMS_TO_TICKS(2000));
+  vTaskDelay(pdMS_TO_TICKS(NETWORK_TASK_STARTUP_DELAY_MS));
 
+  // The interval must divide the hour exactly so transmissions stay anchored to minute 00
+  int32_t snapped_avg = s32Msp_snapToHourDivisor(measStat.avg_measurements);
+  if (snapped_avg != measStat.avg_measurements)
+  {
+    log_w("avg_measurements %d is not a divisor of 60, snapped to %d", measStat.avg_measurements, snapped_avg);
+    measStat.avg_measurements = snapped_avg;
+  }
   measStat.max_measurements = measStat.avg_measurements; /*!< fill the max_measurements with the number set by the user */
 
 #ifndef ENABLE_FIRMWARE_UPDATE_TESTS
-  //++++++++++++++++ DETECT AND INIT SENSORS ++++++++++++++++++++++++++++++
-  log_i("Detecting and initializing sensors...\n");
+  // Enable task watchdog for setup/loop task.
+  // Timeout of 90 s covers the longest intentional delay (NTP sync wait, 60 s max).
+  // Any unrecoverable hang (I2C bus stuck, infinite loop) triggers an auto-reboot.
+  esp_task_wdt_init(90, true);
+  esp_task_wdt_add(NULL);
 
-  // BME680 +++++++++++++++++++++++++++++++++++++
+  // STEP 4: Detect and initialize hardware sensors
+  log_i("=== STEP 4: Detecting and initializing sensors ===");
+
+  // BME680
   vMsp_updateDataAndSendEvent(DISP_EVENT_BME680_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-
   bme680.begin(BME68X_I2C_ADDR_HIGH, Wire);
   if (tHalSensor_checkBMESensor(&bme680))
   {
-    log_i("BME680 sensor detected, initializing...\n");
+    log_i("BME680 sensor detected, initializing...");
     bsec_virtual_sensor_t sensor_list[] = {
         BSEC_OUTPUT_RAW_TEMPERATURE,
         BSEC_OUTPUT_RAW_PRESSURE,
@@ -299,71 +320,67 @@ void setup()
   }
   else
   {
-    log_e("BME680 sensor not detected!\n");
+    log_e("BME680 sensor not detected!");
     vMsp_updateDataAndSendEvent(DISP_EVENT_BME680_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
   }
-  //+++++++++++++++++++++++++++++++++++++++++++++
 
   // PMS5003 ++++++++++++++++++++++++++++++++++++
-  pmsSerial.begin(9600, SERIAL_8N1, PMSERIAL_RX, PMSERIAL_TX); // baud, type, ESP_RX, ESP_TX
-  delay(1500);
+  pmsSerial.begin(PMS_SERIAL_BAUD, SERIAL_8N1, PMSERIAL_RX, PMSERIAL_TX); // baud, type, ESP_RX, ESP_TX
+  delay(PMS_BOOT_DELAY_MS);
   vMsp_updateDataAndSendEvent(DISP_EVENT_PMS5003_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-  delay(1000);
+  delay(PMS_INIT_DELAY_MS);
   if (pms.readUntil(data))
   {
-    log_i("PMS5003 sensor detected, initializing...\n");
+    log_i("PMS5003 sensor detected, initializing...");
     sensorData_accumulate.status.PMS5003Sensor = true;
     vMsp_updateDataAndSendEvent(DISP_EVENT_PMS5003_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     measStat.isPmsAwake = true;
   }
   else
   {
-    log_e("PMS5003 sensor not detected!\n");
+    log_e("PMS5003 sensor not detected!");
     vMsp_updateDataAndSendEvent(DISP_EVENT_PMS5003_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
   }
-  //++++++++++++++++++++++++++++++++++++++++++++++
 
-  // MICSxx14 ++++++++++++++++++++++++++++++++++++
-  vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+  
 
-  // Initialize gas sensor based on configuration type
   switch (sysStat.gasSensorType)
   {
   case GAS_SENSOR_MICS6814:
   {
+    // Gas sensor — type selected from SD card configuration (MICS6814 or MICS4514)
+    vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     if (gas.begin())
-    { // Connect to MICS6814 sensor using default I2C address (0x04)
-      log_i("MICS6814 sensor detected, initializing...\n");
+    {
+      log_i("MICS6814 sensor detected, initializing...");
       sensorData_accumulate.status.MICS6814Sensor = true;
-      gas.powerOn(); // turn on heating element and led
+      gas.powerOn(); // turn on heating element and LED
       gas.ledOn();
       vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
 
       sensorR0Value_t r0Values;
       r0Values.redSensor = gas.getBaseResistance(CH_RED);
-      r0Values.oxSensor = gas.getBaseResistance(CH_OX);
+      r0Values.oxSensor  = gas.getBaseResistance(CH_OX);
       r0Values.nh3Sensor = gas.getBaseResistance(CH_NH3);
 
       if (tHalSensor_checkMicsValues(&sensorData_accumulate, &r0Values) == STATUS_OK)
       {
-        log_i("MICS6814 R0 values are already as default!\n");
+        log_i("MICS6814 R0 values are already at default");
         vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_VALUES_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       }
       else
       {
-        log_i("Setting MICS6814 R0 values as default... ");
+        log_i("Setting MICS6814 R0 values to default...");
         vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_DEF_SETTING, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-
         vHalSensor_writeMicsValues(&sensorData_accumulate);
-
         vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-        log_i("Done!\n");
+        log_i("MICS6814 R0 defaults written");
       }
       gas.setOffsets(&sensorData_accumulate.micsTuningData.sensingResInAirOffset.redSensor);
     }
     else
     {
-      log_e("MICS6814 sensor not detected!\n");
+      log_e("MICS6814 sensor not detected!");
       vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     }
     break;
@@ -371,25 +388,24 @@ void setup()
 
   case GAS_SENSOR_MICS4514:
   {
-    log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...\n");
+    // Gas sensor — type selected from SD card configuration (MICS6814 or MICS4514)
+    vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    log_i("Initializing MICS4514 sensor (DFRobot SEN0377)...");
     if (mics4514.begin())
     {
-      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-      // Connect to MICS4514 sensor using I2C
-      log_i("MICS4514 sensor detected, initializing...\n");
+      log_i("MICS4514 sensor detected, starting %d-min warmup...", MICS4514_WARMUP_TIME_MIN);
       sensorData_accumulate.status.MICS4514Sensor = true;
-
       mics4514.wakeUpMode();
 
-      // Start sensor warmup process
-      log_i("Starting MICS4514 warmup process (%d minutes)...\n", MICS4514_WARMUP_TIME_MIN);
       uint8_t loadingStep = 0;
-      float delayInMs = 5000.0;
+      float delayInMs = MICS4514_WARMUP_POLL_MS;
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_HEATING_UP, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
       while (mics4514.warmUpTime(MICS4514_WARMUP_TIME_MIN) == false)
       {
         // stay here, until the sensor get heaten up.
-        printf("MIXS4514 - Heat-Up: %3.1f %%\n", (float)((loadingStep * delayInMs) / ((MICS4514_WARMUP_TIME_MIN * 60.0f * 1000.0f)) * 100.0f));
+        esp_task_wdt_reset(); // warmup takes ~2 min; reset WDT each 5 s slice
+        printf("MIXS4514 - Heat-Up: %3.1f %%\n", (float)((loadingStep * delayInMs) / ((MICS4514_WARMUP_TIME_MIN * (float)SEC_IN_MIN * (float)MS_IN_SEC)) * PERCENT_DIVISOR));
         vTaskDelay(pdMS_TO_TICKS((int32_t)delayInMs));
         loadingStep++;
       }
@@ -397,55 +413,91 @@ void setup()
       // Initialize MICS4514 specific data
       sensorData_accumulate.mics4514Data.warmupComplete = 0;
       sensorData_accumulate.mics4514Data.powerState = 1;
-
       vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_DONE, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-      log_i("MICS4514 initialization complete!\n");
+      log_i("MICS4514 initialization complete!");
     }
     else
     {
-      log_e("MICS4514 sensor not detected!\n");
+      log_e("MICS4514 sensor not detected!");
       vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     }
     break;
   }
 
+  case GAS_SENSOR_MSP1:
+  {
+    // Gas sensor — type selected from SD card configuration (MICS6814 or MICS4514)
+    vMsp_updateDataAndSendEvent(DISP_EVENT_MSP1_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    if (tMsp1_init() != STATUS_OK)
+    {
+      log_e("MSP1 - INIT ERROR");
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MSP1_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    }
+    else
+    {
+      sensorData_accumulate.status.MSP1Sensor = true;
+      vMsp_updateDataAndSendEvent(DISP_EVENT_MSP1_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      log_i("MSP1 - INIT OK");
+    }
+    vMsp1_printStatus();
+    break;
+  }
+
   default:
   {
-    log_e("Unknown gas sensor type: %d\n", sysStat.gasSensorType);
+    log_e("Unknown gas sensor type: %d", sysStat.gasSensorType);
     vMsp_updateDataAndSendEvent(DISP_EVENT_MICSxx14_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     break;
   }
   }
-  //+++++++++++++++++++++++++++++++++++++++++++++++++++
 
-  // O3 ++++++++++++++++++++++++++++++++++++++++++
+#ifdef MSP1_DEBUG_ENABLE
+  {
+    /* Ensure MSP1 peripherals are initialised for the debug display even when
+     * the SD-card config does not select GAS_SENSOR_MSP1. */
+    if (!bMsp1_isReady())
+    {
+      log_i("MSP1_DEBUG_ENABLE: MSP1 not yet initialised — forcing init");
+      if (tMsp1_init() != STATUS_OK)
+      {
+        log_e("MSP1_DEBUG_ENABLE: MSP1 init failed");
+      }
+      else
+      {
+        // Otherwise the debug MSP1 pages show "--": status.MSP1Sensor is set
+        // only by the GAS_SENSOR_MSP1 branch above, which does not run here.
+        sensorData_accumulate.status.MSP1Sensor = true;
+      }
+    }
+  }
+#endif
+
+  // O3 ozone sensor (analog)
   vMsp_updateDataAndSendEvent(DISP_EVENT_O3_SENSOR_INIT, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
-
   if (!tHalSensor_isAnalogO3Connected())
   {
-    log_e("O3 sensor not detected!\n");
+    log_e("O3 sensor not detected!");
     vMsp_updateDataAndSendEvent(DISP_EVENT_O3_SENSOR_ERR, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
     sensorData_accumulate.status.O3Sensor = false;
   }
   else
   {
-    log_i("O3 sensor detected, running...\n");
+    log_i("O3 sensor detected, running...");
     sensorData_accumulate.status.O3Sensor = true;
     vMsp_updateDataAndSendEvent(DISP_EVENT_O3_SENSOR_OKAY, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
   }
 #endif
-  //+++++++++++++++++++++++++++++++++++++++++++++++++++++
 
   // Always use 1-minute intervals for measurements
   measStat.delay_between_measurements = SEC_IN_MIN;
 
   /*!< Reset measurement count */
   measStat.measurement_count = 0;
-  measStat.avg_measurements = 0;
+  measStat.avg_measurements = measStat.max_measurements;
   measStat.data_transmitted = false; // Initialize transmission flag
 
   sysData.sent_ok = false;
-  sysData.ntp_last_sync_day = -1;         // Force initial NTP sync
+  sysData.ntp_last_sync_day = INVALID_DAY; // Force initial NTP sync
   sysData.server_config_received = false; // No server config yet
   sysData.server_config_response = "";    // Empty config response
 
@@ -455,40 +507,130 @@ void setup()
   measStat.curr_seconds = 0;
   measStat.curr_total_seconds = 0;
   measStat.last_transmission_epoch = 0; // 0 = never transmitted
+  measStat.next_boundary_msm = 0;       // Will be computed at first measurement cycle start
 
-  // STEP 4: Request network connection and wait for NTP sync
-  log_i("=== STEP 4: Requesting network connection and NTP sync ===");
+  // Seed the display struct with the boot-time detection results. Without this
+  // the carousel shows "--" for every sensor until the first measurement cycle
+  // re-syncs it (SYS_STATE_READ_SENSORS), which with MSP1 is a full minute of
+  // "sensor absent" for hardware that was detected fine.
+  sensorData_single.status = sensorData_accumulate.status;
+
   if ((sysStat.configuration == true) || (sysStat.server_ok == true))
   {
-    log_i("Configuration available, requesting network connection...");
-    mainStateMachine.current_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER; // Check for server config first
+    log_i("Configuration OK — requesting network connection");
+    mainStateMachine.current_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER;
     mainStateMachine.next_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER;
     vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_NETWORK_CONN, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
   }
   else
   {
-    log_e("Device has no valid configuration, going into error mode!");
-    mainStateMachine.current_state = SYS_STATE_ERROR; // set initial state to error if no config
-    mainStateMachine.next_state = SYS_STATE_ERROR;    // set next state
+    log_e("No valid configuration — entering error state");
+    mainStateMachine.current_state = SYS_STATE_ERROR;
+    mainStateMachine.next_state = SYS_STATE_ERROR;
   }
 
-  //++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-  mainStateMachine.isFirstTransition = true; // set first transition flag
-
-  // copy the whole sensorData_accumulate into sensorData_single
+  mainStateMachine.isFirstTransition = true;
   memcpy(&sensorData_single, &sensorData_accumulate, sizeof(sensorData_t));
+}
 
-} // end of SETUP
-//*******************************************************************************************************************************
-//*******************************************************************************************************************************
-//*******************************************************************************************************************************
-
-//*******************************************************************************************************************************
-//********************************************  L O O P  ************************************************************************
-//*******************************************************************************************************************************
 void loop()
 {
-  switch (mainStateMachine.current_state) // state machine for the main loop
+  esp_task_wdt_reset(); // feed WDT each iteration; a blocked state triggers auto-reboot
+
+#ifdef MSP1_DEBUG_ENABLE
+  {
+    /* Debug read cycle (~1 s): measure heater, run PI step, accumulate sensor
+     * samples, compute average, then push a display update.  No data is
+     * transmitted, logged, or saved. */
+    tMsp1_measureHeater();
+    tMsp1_heaterControlStep(); /* holds R_heat at the configured R@Tmax */
+
+    {
+      msp1Data_t dbgSnap;
+      tMsp1_getDataCopy(&dbgSnap);
+      Serial.printf("[MSP1 RAW] CH1(heater) vR14=%.2f mV\n", dbgSnap.heater.vR14_mV);
+    }
+
+    unsigned long tDebugStart = millis();
+    while (millis() - tDebugStart < 3000UL)
+    {
+      tMsp1_accumulateSensor();
+      {
+        msp1Data_t dbgSnap;
+        tMsp1_getDataCopy(&dbgSnap);
+        // Serial.printf("[MSP1 RAW] CH0(sensor)=%.2f mV%s  CH1(heater) vR14=%.2f mV\n",
+        //               dbgSnap.sensor.lastRaw_mV,
+        //               dbgSnap.sensor.saturated ? " [SAT]" : "",
+        //               dbgSnap.heater.vR14_mV);
+      }
+      delay(100);
+      esp_task_wdt_reset();
+    }
+
+    tMsp1_computeSensorAverage();
+    tMsp1_computeRno2();
+
+    vMsp_updateDataAndSendEvent(DISP_EVENT_SHOW_MEAS_DATA, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    return;
+  }
+#endif
+
+  // MSP1 background service: heater measure + PI step + one CH0 sample into
+  // ring/accumulator, once per loop() pass in EVERY measurement-cycle state —
+  // not just SYS_STATE_WAIT_FOR_TIMEOUT — so the heater stays in closed loop
+  // and Rno2 keeps integrating also across EVAL/SEND/config/FOTA passes.
+  // Excluded: SYS_STATE_READ_SENSORS (its MSP1 case runs the same sequence
+  // itself as part of the measurement) and pre-cycle boot states (their
+  // passes block tens of seconds on network events — the power limiter in
+  // tMsp1_measureHeater() would react far too slowly to a soft-start
+  // overshoot). This is the only site that touches the NAU7802 mux between
+  // measurements: one heater->sensor switch per pass, each paying the ~1 s
+  // PGA settle flush (see s_selectChannel/MSP1_NAU7802_CHANNEL_FLUSH_READS
+  // in msp1.cpp), so a full pass costs ~2.5 s.
+  if (sysStat.gasSensorType == GAS_SENSOR_MSP1)
+  {
+    switch (mainStateMachine.current_state)
+    {
+    case SYS_STATE_WAIT_FOR_TIMEOUT:
+    case SYS_STATE_EVAL_SENSOR_STATUS:
+    case SYS_STATE_SEND_DATA:
+    case SYS_STATE_UPDATE_CONFIG_FROM_SERVER:
+    case SYS_STATE_FW_VERSION_CHECK:
+    {
+      if (bMsp1_isReady())
+      {
+        // Each step only runs if the previous one succeeded: heaterControlStep
+        // would act on a stale current reading if measureHeater failed, and
+        // skipping accumulateSensor too keeps each pass's outcome simple to
+        // reason about (either the whole heat->sensor read succeeded, or we
+        // log exactly which step broke and retry next pass).
+        if (tMsp1_measureHeater() == STATUS_OK)
+        {
+          if (tMsp1_heaterControlStep() == STATUS_OK)
+          {
+            if (tMsp1_accumulateSensor() != STATUS_OK)
+            {
+              log_w("MSP1 service: accumulateSensor failed, skipping this pass's CH0 sample");
+            }
+          }
+          else
+          {
+            log_w("MSP1 service: heaterControlStep failed, skipping CH0 sample this pass");
+          }
+        }
+        else
+        {
+          log_w("MSP1 service: measureHeater failed, skipping PI step and CH0 sample this pass");
+        }
+      }
+      break;
+    }
+    default:
+      break;
+    }
+  }
+
+  switch (mainStateMachine.current_state)
   {
   case SYS_STATE_UPDATE_CONFIG_FROM_SERVER:
   {
@@ -513,9 +655,17 @@ void loop()
         {
           log_i("System structures updated successfully from server");
 
-          // Update max_measurements to match the new avg_measurements from server
+          // The interval must divide the hour exactly so transmissions stay anchored to minute 00
+          int32_t snapped_avg = s32Msp_snapToHourDivisor(measStat.avg_measurements);
+          if (snapped_avg != measStat.avg_measurements)
+          {
+            log_w("Server avg_measurements %d is not a divisor of 60, snapped to %d", measStat.avg_measurements, snapped_avg);
+            measStat.avg_measurements = snapped_avg;
+          }
+
+          // The server is the source of truth for the configured interval
           measStat.max_measurements = measStat.avg_measurements;
-          log_i("Updated max_measurements to %d for hourly boundary alignment", measStat.max_measurements);
+          log_i("Updated max_measurements to %d for boundary alignment", measStat.max_measurements);
 
           // Step 2: Write updated system structures to config_v4.json
           log_i("Attempting to write configuration to SD card...");
@@ -558,7 +708,6 @@ void loop()
     mainStateMachine.prev_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER;
     break;
   }
-  //------------------------------------------------------------------------------------------------------------------------
   case SYS_STATE_WAIT_FOR_NTP_SYNC:
   {
     log_i("Waiting for NTP synchronization...");
@@ -584,12 +733,15 @@ void loop()
       if (isNetworkConnected() == false)
         requestNetworkConnection();
 
-      vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_NETWORK_CONN, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+      // sensorData_single, not _accumulate: accumulate holds running sums and is
+      // zeroed right after SEND_DATA — this state runs immediately after it, so
+      // it published all-zero readings on the daily NTP resync.
+      vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_NETWORK_CONN, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
       mainStateMachine.isFirstTransition = false;
     }
 
     // Wait for the network connection event
-    if ((pdTRUE == waitForNetworkEvent(NET_EVENT_CONNECTED, pdMS_TO_TICKS(5000))) || (isNetworkConnected() == true))
+    if ((pdTRUE == waitForNetworkEvent(NET_EVENT_CONNECTED, pdMS_TO_TICKS(NETWORK_EVENT_WAIT_MS))) || (isNetworkConnected() == true))
     {
       isConnected = true;
     }
@@ -606,8 +758,7 @@ void loop()
       break;
     }
 
-    // Wait for network connection and automatic time sync from network task
-    if (pdTRUE == waitForNetworkEvent(NET_EVENT_TIME_SYNCED, portMAX_DELAY))
+    if (pdTRUE == waitForNetworkEvent(NET_EVENT_TIME_SYNCED, pdMS_TO_TICKS(60000)))
     {
       log_i("NTP sync completed, starting measurement cycle");
       // Record the sync day for daily tracking
@@ -635,10 +786,10 @@ void loop()
       log_i("=== Firmware Update Test Completed ===");
 #endif
 
-      mainStateMachine.next_state = SYS_STATE_FW_VERSION_CHECK;
+      mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
       mainStateMachine.isFirstTransition = true;
       mainStateMachine.prev_state = SYS_STATE_WAIT_FOR_NTP_SYNC;
-      log_i("NTP sync >>>> SYS_STATE_FW_VERSION_CHECK");
+      log_i("NTP sync >>>> SYS_STATE_WAIT_FOR_TIMEOUT");
     }
     else
     {
@@ -648,12 +799,18 @@ void loop()
     }
     break;
   }
-  //------------------------------------------------------------------------------------------------------------------------
-  //------------------------------------------------------------------------------------------------------------------------
   case SYS_STATE_FW_VERSION_CHECK:
   {
-    static int last_fw_check_day = -1;
-    static int current_day = -1;
+#if defined(SKIP_FIRMWARE_UPDATE)
+    // FOTA disabled at compile time (see config.h): never evaluate updates
+    // online, go straight to the timeout state.
+    log_i("SKIP_FIRMWARE_UPDATE active >>>> SYS_STATE_WAIT_FOR_TIMEOUT");
+    mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
+    mainStateMachine.prev_state = SYS_STATE_FW_VERSION_CHECK;
+    mainStateMachine.isFirstTransition = true;
+#else
+    static int last_fw_check_day = INVALID_DAY;
+    static int current_day = INVALID_DAY;
     if (mainStateMachine.isFirstTransition == true)
     {
       // Check for firmware updates after midnight data transmission
@@ -664,7 +821,7 @@ void loop()
         // Check if this is midnight hour transmission (00:xx) and we haven't checked today
         // Allow firmware check for any minute in the midnight hour, not just 00:00
         if (sysStat.fwAutoUpgrade &&
-            ((last_fw_check_day == -1) ||
+            ((last_fw_check_day == INVALID_DAY) ||
              ((timeinfo.tm_hour == 0) && (current_day != last_fw_check_day))))
         {
           log_d("Firmware check started: hour=%d, min=%d, day=%d, last_check_day=%d, fwAutoUpgrade=%s",
@@ -685,13 +842,13 @@ void loop()
           mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
           mainStateMachine.prev_state = SYS_STATE_FW_VERSION_CHECK;
           mainStateMachine.isFirstTransition = true;
-          current_day = -1;
+          current_day = INVALID_DAY;
         }
       }
     }
     else
     {
-      if ((pdTRUE == waitForNetworkEvent(NET_EVENT_CONNECTED, pdMS_TO_TICKS(5000))) || (isNetworkConnected() == true))
+      if ((pdTRUE == waitForNetworkEvent(NET_EVENT_CONNECTED, pdMS_TO_TICKS(NETWORK_EVENT_WAIT_MS))) || (isNetworkConnected() == true))
       {
         // The Firmware Update is needed, waiting for the network connection
         if (true == bHalFirmware_checkForUpdates(&sysData, &sysStat, &devinfo))
@@ -713,21 +870,42 @@ void loop()
       mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
       mainStateMachine.prev_state = SYS_STATE_FW_VERSION_CHECK;
       mainStateMachine.isFirstTransition = true;
-      current_day = -1;
+      current_day = INVALID_DAY;
     }
+#endif // SKIP_FIRMWARE_UPDATE
 
     vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_TIMEOUT, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
     break;
   }
-    //------------------------------------------------------------------------------------------------------------------------
-    //------------------------------------------------------------------------------------------------------------------------
-
+    
   case SYS_STATE_WAIT_FOR_TIMEOUT:
   {
+    // MSP1 servicing (heater measure + PI + CH0 sample) runs at the top of
+    // loop() for every measurement-cycle state — see the background service
+    // block before the state switch. Here only the idle display refresh.
+    //
+    // Fixed cadence for EVERY gas sensor type, not gated on MSP1 producing
+    // samples: such a gate never fires with MSP1 absent or faulted, so the
+    // carousel received no sensor data at all and kept redrawing a stale
+    // snapshot — including boot-time ones whose status flags predate sensor
+    // detection, which is why pulling MSP1 made the BME680 page show "--" for
+    // a sensor that was working.
+    //
+    // sensorData_single, not sensorData_accumulate: accumulate holds running
+    // SUMS (divided by performAverages() only inside SYS_STATE_SEND_DATA, for
+    // the server) and is zeroed at the start of every cycle. The display shows
+    // instant readings.
+    static unsigned long lastDisplayRefresh = 0;
+    if ((millis() - lastDisplayRefresh) > DISPLAY_IDLE_DELAY_MS)
+    {
+      lastDisplayRefresh = millis();
+      vMsp_updateDataAndSendEvent(DISP_EVENT_SHOW_MEAS_DATA, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
+    }
+
     // Periodic SD card presence check
     static unsigned long lastSdCheck = 0;
-    if (millis() - lastSdCheck > 30000)
-    { // Check every 30 seconds
+    if (millis() - lastSdCheck > SD_CARD_CHECK_INTERVAL_MS)
+    {
       lastSdCheck = millis();
       vHalSdcard_periodicCheck(&sysStat, &devinfo);
     }
@@ -737,36 +915,42 @@ void loop()
       measStat.curr_minutes = timeinfo.tm_min;
       measStat.curr_seconds = timeinfo.tm_sec;
       measStat.curr_total_seconds = measStat.curr_minutes * SEC_IN_MIN + measStat.curr_seconds;
-
-      // Calculate if we are exactly at the start of a minute (00 seconds)
-      // We trigger measurement only when seconds == 0, ensuring exact minute alignment
       measStat.timeout_seconds = ((measStat.curr_total_seconds + measStat.additional_delay) % measStat.delay_between_measurements);
 
-      // It is time for a measurement? If so continue, otherwise break.
-      if (measStat.timeout_seconds != 0)
+      // Fire once per measurement period (delay_between_measurements seconds
+      // long), not on an exact :00-second match: the MSP1 heater/sensor
+      // service above (channel-switch settle flush, bounded ADC-timeout
+      // retries) makes each pass through this state take anywhere from
+      // ~2 s to several seconds, so an exact-second check can step right
+      // over the single target second and never fire. What matters is
+      // catching the correct period at all, any second within it is fine.
+      // currentPeriodIndex is derived from the monotonic epoch (not
+      // curr_total_seconds, which wraps every hour), so it's safe across
+      // hour/day boundaries and naturally dedupes repeat passes within the
+      // same period — no separate edge-triggered lock needed.
+      time_t nowEpoch = mktime(&timeinfo);
+      long currentPeriodIndex = (long)((nowEpoch + measStat.additional_delay) / measStat.delay_between_measurements);
+
+      static long s_lastFiredPeriodIndex = -1;
+      if (currentPeriodIndex == s_lastFiredPeriodIndex)
       {
         mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
         break;
       }
+      s_lastFiredPeriodIndex = currentPeriodIndex;
 
-      // It is time for a measurement - trigger at exactly 00 seconds of every minute
-      if (measStat.timeout_seconds == 0)
-      {
-        log_i("Timeout expired!");
-        log_i("Current time: %02d:%02d:%02d", timeinfo.tm_hour, measStat.curr_minutes, measStat.curr_seconds);
+      // The period index above IS the trigger — do NOT re-gate on
+      // measStat.timeout_seconds == 0 (exact :00 second). The index is consumed
+      // (s_lastFiredPeriodIndex) by the first pass entering the period, so an
+      // additional exact-second condition kills the period for good whenever
+      // that pass does not land on second 00 — which, with MSP1 servicing
+      // making a pass take seconds, is nearly always: READ_SENSORS then never
+      // runs and every measurement stays at zero.
+      log_i("Timeout expired!");
+      log_i("Current time: %02d:%02d:%02d", timeinfo.tm_hour, measStat.curr_minutes, measStat.curr_seconds);
 
-        mainStateMachine.prev_state = SYS_STATE_WAIT_FOR_TIMEOUT;
-        mainStateMachine.next_state = SYS_STATE_READ_SENSORS; // go to read sensors state
-      }
-      else
-      {
-        // if it is not the first transition, wait for timeout
-        if (measStat.isSensorDataAvailable == false)
-        {
-          vMsp_updateDataAndSendEvent(DISP_EVENT_WAIT_FOR_TIMEOUT, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
-          delay(500);
-        }
-      }
+      mainStateMachine.prev_state = SYS_STATE_WAIT_FOR_TIMEOUT;
+      mainStateMachine.next_state = SYS_STATE_READ_SENSORS; // go to read sensors state
     }
     else
     {
@@ -775,9 +959,7 @@ void loop()
     }
     break;
   }
-    //------------------------------------------------------------------------------------------------------------------------
-    //------------------------------------------------------------------------------------------------------------------------
-
+    
   case SYS_STATE_READ_SENSORS:
   {
     log_i("Reading sensors...");
@@ -804,75 +986,37 @@ void loop()
       sensorData_accumulate.mics4514AdcAccumulator.oxVoltageSum = 0;
       sensorData_accumulate.mics4514AdcAccumulator.redVoltageSum = 0;
 
-      // Calculate measurements needed to reach next transmission boundary
-      // For max_measurements=5: boundaries at 0,5,10,15,20,25,30,35,40,45,50,55
-      int minutes_to_next_boundary = 0;
-      int next_boundary_minute = 0;
-
-      // Calculate next boundary from current minute
-      // If we're exactly at a boundary, move to the NEXT one
-      if ((measStat.curr_minutes % measStat.max_measurements) == 0)
+      // Compute the next clock-aligned transmission boundary (minutes since midnight).
+      // Formula: next_boundary = ((start_msm / avg_meas) + 1) * avg_meas
+      // avg_measurements is guaranteed to be an integer divisor of 60, so boundaries are
+      // always anchored to minute 00 of every hour (e.g. avg=5 → :00, :05, ..., :55).
+      // Example: avg=3, start=13:03 (msm=783) → (783/3+1)*3 = 786 → 13:06
       {
-        // Currently at a boundary (e.g., minute 5 with max_measurements=5)
-        // Next boundary is one full interval away
-        next_boundary_minute = measStat.curr_minutes + measStat.max_measurements;
+        int32_t start_msm = timeinfo.tm_hour * MIN_IN_HOUR + timeinfo.tm_min;
+        measStat.next_boundary_msm = ((start_msm / measStat.avg_measurements) + 1) * measStat.avg_measurements;
+        log_i("NEW CYCLE: start %02d:%02d, first TX at msm=%d (%02d:%02d)",
+              timeinfo.tm_hour, timeinfo.tm_min,
+              measStat.next_boundary_msm,
+              measStat.next_boundary_msm / MIN_IN_HOUR,
+              measStat.next_boundary_msm % MIN_IN_HOUR);
       }
-      else
-      {
-        // Not at a boundary, find the next one
-        next_boundary_minute = ((measStat.curr_minutes / measStat.max_measurements) + 1) * measStat.max_measurements;
-      }
-
-      // Calculate measurements needed BEFORE handling hour wraparound
-      // This way we can calculate correctly even when next_boundary > 60
-      if (next_boundary_minute > measStat.curr_minutes)
-      {
-        // Normal case or max_measurements=60 from minute 0
-        // Examples:
-        //   - minute 3 to boundary 5: (5-3)+1 = 3 measurements
-        //   - minute 0 to boundary 60: (60-0)+1 = 61, capped to 60
-        minutes_to_next_boundary = (next_boundary_minute - measStat.curr_minutes) + 1;
-      }
-      else
-      {
-        // This should not happen with correct logic above, but handle it safely
-        minutes_to_next_boundary = measStat.max_measurements;
-      }
-
-      // Handle hour wraparound for next_boundary (for display purposes only)
-      if (next_boundary_minute >= 60)
-      {
-        next_boundary_minute = 0; // Wrap to minute 00 of next hour
-      }
-
-      // Special case: if we calculated more measurements than the interval allows,
-      // cap it to max_measurements (happens when starting exactly at a boundary)
-      if (minutes_to_next_boundary > measStat.max_measurements)
-      {
-        minutes_to_next_boundary = measStat.max_measurements;
-      }
-
-      measStat.avg_measurements = minutes_to_next_boundary;
-
-      log_i("BOUNDARY CALCULATION: curr_minute=%d, max_measurements(interval)=%d, cycle_needs(dynamic)=%d, next_boundary=%d",
-            measStat.curr_minutes, measStat.max_measurements, minutes_to_next_boundary, next_boundary_minute);
-      log_i("TIMING ALIGNMENT: Will collect %d measurements from minute %d to boundary minute %d",
-            measStat.avg_measurements, measStat.curr_minutes, next_boundary_minute);
-
-      if (measStat.avg_measurements == 0)
-      {
-        measStat.avg_measurements = 1; // If the number of measurements is 0, set it to 1
-        // it means we are starting the measurement in the exact minute in which we want to send the data
-      }
-
       err.BMEfails = 0;
       err.PMSfails = 0;
       err.MICSfails = 0;
       err.O3fails = 0;
       err.count = 0;
+      // senserrs[] is documented as per-cycle but was only ever set (in
+      // performAverages), never cleared: one failed cycle latched a sensor as
+      // "in error" for the rest of the uptime. Its consumer in
+      // SYS_STATE_EVAL_SENSOR_STATUS then re-asserted status.X every cycle
+      // forever, masking any later failure of that same sensor.
+      memset(err.senserrs, 0, sizeof(err.senserrs));
 
-      // Note: measurement_count will be incremented after this sensor reading completes
-      log_i("NEW MEASUREMENT CYCLE: Starting fresh with count %d (target: %d measurements)", measStat.measurement_count, measStat.avg_measurements);
+      // Sync sensor detection status to sensorData_single so the display always
+      // reflects the current hardware state for instant readings.
+      sensorData_single.status = sensorData_accumulate.status;
+
+      log_i("NEW MEASUREMENT CYCLE: Starting fresh — will collect %d measurements (1 per minute)", measStat.avg_measurements);
     }
 
     // Prevent over-collection: if we already have enough measurements, skip sensor reading
@@ -886,6 +1030,13 @@ void loop()
 
     log_i("=== READING SENSOR #%d (target: %d measurements) ===", measStat.measurement_count + 1, measStat.avg_measurements);
 
+    // sensorData_single is NOT cleared here. It used to be, and the event right
+    // below then published an all-zero snapshot the display task latched into
+    // lastValidSensorData and redrew on the carousel for the whole duration of
+    // this state (seconds, with MSP1 channel-switch settles) — one "everything
+    // is 0,00" frame per measurement cycle. Each sensor block below overwrites
+    // its own fields on success, and on failure raises fault.X, which the draw
+    // functions already render as FAULT instead of a stale value.
     vMsp_updateDataAndSendEvent(DISP_EVENT_READING_SENSORS, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
 
     // READING BME680
@@ -907,7 +1058,7 @@ void loop()
             err.BMEfails++;
             break;
           }
-          delay(1000);
+          delay(SENSOR_RETRY_DELAY_MS);
           continue;
         }
 
@@ -915,7 +1066,7 @@ void loop()
         if (retry == 0)
         {
           // Give BME680 time to prepare measurement (especially gas sensor)
-          delay(500);
+          delay(BME680_MEAS_PREP_DELAY_MS);
         }
 
         if (!bme680.run())
@@ -927,7 +1078,7 @@ void loop()
             err.BMEfails++;
           }
           // Increase delay for BME680 gas measurement to complete (datasheet: 150-350ms)
-          delay(300);
+          delay(BME680_NOT_READY_DELAY_MS);
           continue;
         }
 
@@ -961,13 +1112,31 @@ void loop()
         break;
       }
 
+      // Per-measurement fault flag: FAULT on display instead of the stale
+      // previous value when every retry failed this measurement.
+      sensorData_single.fault.BME680Sensor = !sensor_read_success;
+      sensorData_accumulate.fault.BME680Sensor = !sensor_read_success;
+
       if (sensor_read_success)
       {
         log_i("BME680 measurement #%d completed successfully", measStat.measurement_count + 1);
       }
     }
-    //------------------------------------------------------------------------------------------------------------------------
-    //------------------------------------------------------------------------------------------------------------------------
+
+    // MSP1 heater: the loop()-top background service excludes
+    // SYS_STATE_READ_SENSORS, so everything above (accumulation reset,
+    // display update, BME680 sampling with its retry delays) runs with no PI
+    // correction at all — up to a few seconds. Service it once more here so
+    // the MSP1 case below starts from a freshly corrected heater resistance
+    // instead of whatever it drifted to during that gap.
+    if (sysStat.gasSensorType == GAS_SENSOR_MSP1)
+    {
+      if (bMsp1_isReady())
+      {
+        tMsp1_measureHeater();
+        (void)tMsp1_heaterControlStep();
+      }
+    }
 
     // Gas sensor reading (MICS6814 or MICS4514)
     switch (sysStat.gasSensorType)
@@ -998,7 +1167,7 @@ void loop()
               err.MICSfails++;
               break;
             }
-            delay(1000);
+            delay(SENSOR_RETRY_DELAY_MS);
             continue;
           }
 
@@ -1025,6 +1194,9 @@ void loop()
 
           break;
         }
+
+        sensorData_single.fault.MICS6814Sensor = !mics_read_success;
+        sensorData_accumulate.fault.MICS6814Sensor = !mics_read_success;
 
         if (mics_read_success)
         {
@@ -1056,7 +1228,7 @@ void loop()
               err.MICSfails++;
               break;
             }
-            delay(1000);
+            delay(SENSOR_RETRY_DELAY_MS);
             continue;
           }
 
@@ -1098,11 +1270,114 @@ void loop()
           break;
         }
 
+        sensorData_single.fault.MICS4514Sensor = !mics_read_success;
+        sensorData_accumulate.fault.MICS4514Sensor = !mics_read_success;
+
         if (mics_read_success)
         {
           log_i("MICS4514 measurement #%d completed successfully", measStat.measurement_count + 1);
         }
         break;
+      }
+      break;
+    }
+    case GAS_SENSOR_MSP1:
+    {
+      // Same shape as the other sensors: detection status gates the read, the
+      // live NAU7802/MCP4725 readiness flags are the runtime check on top of it.
+      if (sensorData_accumulate.status.MSP1Sensor && bMsp1_isReady())
+      {
+        log_i("Sampling MICS-2714 NO2 sensor (MSP1)...");
+        err.count = 0;
+        bool msp1_read_success = false;
+
+        for (int retry = 0; retry < MAX_SENSOR_RETRIES; retry++)
+        {
+          /* Step 1 — update heater measurement (NAU7802 CH2) */
+          if (tMsp1_measureHeater() != STATUS_OK)
+          {
+            err.count++;
+            log_w("MSP1 heater measure failed, attempt %d/%d", retry + 1, MAX_SENSOR_RETRIES);
+            if (retry == (MAX_SENSOR_RETRIES - 1))
+            {
+              log_e("MSP1 heater measurement failed after %d attempts!", MAX_SENSOR_RETRIES);
+              err.MICSfails++;
+              break;
+            }
+            delay(1000);
+            continue;
+          }
+
+          /* Step 2 — control step: hold R_heat at the configured R@Tmax */
+          (void)tMsp1_heaterControlStep();
+
+          /* Step 3 — accumulate one NO2 sample (NAU7802 CH1) */
+          if (tMsp1_accumulateSensor() != STATUS_OK)
+          {
+            err.count++;
+            log_w("MSP1 sensor ADC not ready, attempt %d/%d", retry + 1, MAX_SENSOR_RETRIES);
+            if (retry == (MAX_SENSOR_RETRIES - 1))
+            {
+              log_e("MSP1 sensor accumulation failed after %d attempts!", MAX_SENSOR_RETRIES);
+              err.MICSfails++;
+              break;
+            }
+            delay(100); /* NAU7802 @ 10 SPS: next sample in ~100 ms */
+            continue;
+          }
+
+          msp1_read_success = true;
+
+          /* Step 4 — Rno2/R0 for this measurement, accumulated into
+           * pollutionData.nitrogenDioxide the same way MICS6814/4514 sum
+           * their per-measurement readings (+=) for SYS_STATE_SEND_DATA to
+           * divide by measurement_count — not a live snapshot overwrite.
+           * tMsp1_peekRno2Ratio() works off the sliding-window average of the
+           * last MSP1_DISPLAY_AVG_SAMPLES CH0 samples, so each measurement
+           * reflects the sensor around its own timeout instant (~12 s memory)
+           * instead of a cumulative window average, whose memory grows with
+           * the transmission window and makes the transmitted mean
+           * early-sample-weighted (a mid-window gas step showed only ~16%
+           * instead of 50%). */
+          float fRno2Ratio = 0.0f;
+          if (tMsp1_peekRno2Ratio(&fRno2Ratio) == STATUS_OK)
+          {
+            sensorData_accumulate.pollutionData.nitrogenDioxide += fRno2Ratio;
+            sensorData_single.pollutionData.nitrogenDioxide = fRno2Ratio;
+
+            log_v("MSP1 NO2: Rno2/R0=%.4f", fRno2Ratio);
+          }
+
+          msp1Data_t msp1Snap;
+          tMsp1_getDataCopy(&msp1Snap);
+          log_i("MSP1 meas #%d: sample #%lu accumulated — heater %.2f mA (%.1f mW theor.)",
+                measStat.measurement_count + 1,
+                msp1Snap.sensor.sampleCount,
+                msp1Snap.heater.current_mA,
+                msp1Snap.heater.power_mW);
+          break;
+        }
+
+        sensorData_single.fault.MSP1Sensor = !msp1_read_success;
+        sensorData_accumulate.fault.MSP1Sensor = !msp1_read_success;
+
+        if (msp1_read_success)
+        {
+          log_i("MSP1 measurement #%d completed successfully", measStat.measurement_count + 1);
+        }
+      }
+      else if (sensorData_accumulate.status.MSP1Sensor)
+      {
+        // Detected at boot but not answering now: count it as a failed
+        // measurement and raise FAULT, instead of skipping the whole block in
+        // silence and transmitting an Rno2 average of nothing.
+        msp1Data_t msp1Snap;
+        tMsp1_getDataCopy(&msp1Snap);
+        log_e("MSP1 not ready (NAU7802=%u, MCP4725=%u) — measurement #%d skipped",
+              msp1Snap.nau7802Ready, msp1Snap.mcp4725Ready, measStat.measurement_count + 1);
+        err.MICSfails++;
+        sensorData_single.fault.MSP1Sensor = true;
+        sensorData_accumulate.fault.MSP1Sensor = true;
       }
       break;
     }
@@ -1133,7 +1408,7 @@ void loop()
             err.O3fails++;
             break;
           }
-          delay(1000);
+          delay(SENSOR_RETRY_DELAY_MS);
           continue;
         }
 
@@ -1146,6 +1421,9 @@ void loop()
 
         break;
       }
+
+      sensorData_single.fault.O3Sensor = !o3_read_success;
+      sensorData_accumulate.fault.O3Sensor = !o3_read_success;
 
       if (o3_read_success)
       {
@@ -1183,7 +1461,7 @@ void loop()
             err.PMSfails++;
             break;
           }
-          delay(1000);
+          delay(SENSOR_RETRY_DELAY_MS);
           continue;
         }
 
@@ -1204,6 +1482,9 @@ void loop()
         break;
       }
 
+      sensorData_single.fault.PMS5003Sensor = !pms_read_success;
+      sensorData_accumulate.fault.PMS5003Sensor = !pms_read_success;
+
       if (pms_read_success)
       {
         log_i("PMS5003 measurement #%d completed successfully", measStat.measurement_count + 1);
@@ -1217,8 +1498,11 @@ void loop()
 
     measStat.measurement_count++;
     log_i("MEASUREMENT COUNT: Incremented to %d (target: %d measurements)", measStat.measurement_count, measStat.avg_measurements);
-    log_i("Current minute: %d, expected transmission at boundary: %s",
-          measStat.curr_minutes, ((measStat.curr_minutes % measStat.max_measurements) == 0) ? "YES" : "NO");
+    log_i("Current msm=%d, next TX boundary at msm=%d (%02d:%02d)",
+          timeinfo.tm_hour * MIN_IN_HOUR + measStat.curr_minutes,
+          measStat.next_boundary_msm,
+          measStat.next_boundary_msm / MIN_IN_HOUR,
+          measStat.next_boundary_msm % MIN_IN_HOUR);
 
     log_i("Sensor values AFTER evaluation:\n");
     log_i("temp: %.2f, hum: %.2f, pre: %.2f, VOC: %.2f, PM1: %d, PM25: %d, PM10: %d, MICS_CO: %.2f, MICS_NO2: %.2f, MICS_NH3: %.2f, ozone: %.2f, MSP: %d, measurement_count: %d\n",
@@ -1232,8 +1516,6 @@ void loop()
     mainStateMachine.next_state = SYS_STATE_EVAL_SENSOR_STATUS;
     break;
   }
-  //------------------------------------------------------------------------------------------------------------------------
-  //------------------------------------------------------------------------------------------------------------------------
   case SYS_STATE_EVAL_SENSOR_STATUS:
   {
     log_i("Evaluating sensor status...");
@@ -1267,82 +1549,93 @@ void loop()
           sensorData_accumulate.status.O3Sensor = true;
           sensorData_single.status.O3Sensor = true;
           break;
+        case SENS_STAT_MSP1:
+          sensorData_accumulate.status.MSP1Sensor = true;
+          sensorData_single.status.MSP1Sensor = true;
+          break;
         }
       }
     }
 
-    // Check if it's time to send data
-    // We transmit when:
-    //   1) At a clock-aligned interval boundary (curr_minutes % max_measurements == 0)
-    //      OR enough seconds have elapsed since the last transmission (fallback for missed windows)
-    //   2) Enough measurements have been collected for this cycle
-    //   3) Haven't already transmitted in this boundary window
+    // Clock-aligned transmission: send when the current time reaches the pre-computed boundary.
+    // Boundary is set at cycle start: next multiple of avg_measurements minutes since midnight,
+    // always anchored to minute 00 of every hour (avg_measurements divides 60).
+    int32_t curr_msm = timeinfo.tm_hour * MIN_IN_HOUR + measStat.curr_minutes;
 
     time_t now_epoch = mktime(&timeinfo);
 
     // Compute seconds elapsed since last transmission (0 if never transmitted)
     int32_t seconds_since_last_tx = (measStat.last_transmission_epoch > 0)
-                                    ? (int32_t)(now_epoch - measStat.last_transmission_epoch)
-                                    : 0;
+                                        ? (int32_t)(now_epoch - measStat.last_transmission_epoch)
+                                        : 0;
 
     int32_t interval_seconds = (int32_t)(measStat.max_measurements * SEC_IN_MIN);
 
-    // Standard clock-aligned boundary (e.g. minute 0 for hourly, minute 0/30 for 30-min)
-    bool at_transmission_boundary = ((measStat.curr_minutes % measStat.max_measurements) == 0);
-
-    // Fallback: enough seconds have elapsed regardless of minute alignment.
-    // This handles all rollover cases (including 60-min: same minute across hours) and
-    // recovers gracefully if the exact boundary second is missed due to processing delays.
+    // Fallback: enough seconds have elapsed since the last transmission regardless of the
+    // pre-computed boundary. Recovers gracefully if the exact boundary minute is missed
+    // due to processing delays or clock adjustments.
     bool enough_time_passed = (measStat.last_transmission_epoch > 0) &&
                               (seconds_since_last_tx >= interval_seconds);
 
-    at_transmission_boundary = at_transmission_boundary || enough_time_passed;
+    // Duplicate guard: never transmit twice within the same minute. The boundary is
+    // re-computed per cycle and always in the future, so this only protects against
+    // re-entering the check before the clock moves past the boundary minute.
+    bool boundary_not_transmitted = (measStat.last_transmission_epoch == 0) ||
+                                    (seconds_since_last_tx >= SEC_IN_MIN);
 
-    // Duplicate guard: only transmit once per boundary window.
-    // "Not yet transmitted" if we have never transmitted OR enough seconds have passed
-    // since the last one (i.e. we are in a new window, not the same one).
-    bool boundary_not_transmitted = (measStat.last_transmission_epoch == 0) || enough_time_passed;
-
-    // Measurement count guard: don't fire early (e.g. first boot at minute 0 reads
-    // only 1 sample before the boundary check would trigger).
-    bool enough_measurements = (measStat.measurement_count >= measStat.avg_measurements);
-
-    int curr_hour = timeinfo.tm_hour;
-    log_i("TRANSMISSION CHECK: collected %d/%d measurements, boundary=%s (time %02d:%02d, interval=%d), last_tx_epoch=%lld, secs_since_tx=%d",
-          measStat.measurement_count, measStat.avg_measurements,
-          at_transmission_boundary ? "YES" : "NO", curr_hour, measStat.curr_minutes, measStat.max_measurements,
+    log_i("TRANSMISSION CHECK: curr_msm=%d, next_boundary_msm=%d, collected %d measurements, last_tx_epoch=%lld, secs_since_tx=%d",
+          curr_msm, measStat.next_boundary_msm, measStat.measurement_count,
           (long long)measStat.last_transmission_epoch, seconds_since_last_tx);
 
-    log_i("BOUNDARY DETAILS: standard_boundary=%s, enough_time_passed=%s, enough_measurements=%s",
-          ((measStat.curr_minutes % measStat.max_measurements) == 0) ? "YES" : "NO",
-          enough_time_passed ? "YES" : "NO",
-          enough_measurements ? "YES" : "NO");
-
-    if (at_transmission_boundary && boundary_not_transmitted && enough_measurements)
+    // Handle midnight rollover: next_boundary_msm may be >= MIN_IN_DAY when the boundary
+    // falls in the next calendar day (e.g., cycle starts at 23:58 with avg=3 → boundary=1440).
+    // After midnight curr_msm resets to 0, so compare against the wrapped boundary instead.
+    // Guard with curr_msm < MIN_IN_HALF_DAY to avoid false-positive triggers in the pre-midnight window.
+    uint8_t boundary_crossed;
+    if (measStat.next_boundary_msm >= MIN_IN_DAY)
     {
-      log_i("All measurements obtained, going to send data...\n");
-      mainStateMachine.next_state = SYS_STATE_SEND_DATA; // go to send data state
+      int32_t wrapped_boundary = measStat.next_boundary_msm - MIN_IN_DAY;
+      boundary_crossed = (curr_msm >= wrapped_boundary) && (curr_msm < MIN_IN_HALF_DAY);
+      log_i("MIDNIGHT WRAP: wrapped_boundary=%d, curr_msm=%d, boundary_crossed=%s",
+            wrapped_boundary, curr_msm, boundary_crossed ? "YES" : "NO");
     }
-    else if (!boundary_not_transmitted)
+    else
     {
-      log_i("Data already transmitted at this boundary (%02d:%02d), waiting for next boundary", curr_hour, measStat.curr_minutes);
+      boundary_crossed = (curr_msm >= measStat.next_boundary_msm);
+    }
+
+    // Missed-boundary fallback: transmit anyway if a full interval has elapsed
+    boundary_crossed = boundary_crossed || enough_time_passed;
+
+    log_i("BOUNDARY DETAILS: boundary_crossed=%s, enough_time_passed=%s, not_yet_transmitted=%s",
+          boundary_crossed ? "YES" : "NO",
+          enough_time_passed ? "YES" : "NO",
+          boundary_not_transmitted ? "YES" : "NO");
+
+    if (boundary_crossed && boundary_not_transmitted && (measStat.measurement_count > 0))
+    {
+      log_i("Clock boundary reached (curr_msm=%d, next_boundary_msm=%d, wrapped=%s): sending average of %d measurements",
+            curr_msm, measStat.next_boundary_msm, (measStat.next_boundary_msm >= MIN_IN_DAY ? "yes" : "no"), measStat.measurement_count);
+      mainStateMachine.next_state = SYS_STATE_SEND_DATA;
+    }
+    else if (boundary_crossed && !boundary_not_transmitted)
+    {
+      log_i("Data already transmitted in this window (%02d:%02d), waiting for next boundary", timeinfo.tm_hour, measStat.curr_minutes);
       mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
     }
     else
     {
-      // MEASUREMENTS MESSAGE
-      log_i("Measurements in progress...\n");
+      log_i("Collecting measurements: %d so far, next TX at %02d:%02d...",
+            measStat.measurement_count,
+            measStat.next_boundary_msm / MIN_IN_HOUR,
+            measStat.next_boundary_msm % MIN_IN_HOUR);
       vMsp_updateDataAndSendEvent(DISP_EVENT_SHOW_MEAS_DATA, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
-
-      log_i("Not enough measurements obtained, going to wait for timeout...\n");
       mainStateMachine.next_state = SYS_STATE_WAIT_FOR_TIMEOUT;
     }
 
     mainStateMachine.prev_state = SYS_STATE_EVAL_SENSOR_STATUS;
     break;
   }
-  //------------------------------------------------------------------------------------------------------------------------
-  //------------------------------------------------------------------------------------------------------------------------
   case SYS_STATE_SEND_DATA:
   {
     log_i("Sending data to server...\n");
@@ -1359,7 +1652,7 @@ void loop()
 
     vMsp_updateDataAndSendEvent(DISP_EVENT_SENDING_MEAS, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
 
-    if (sensorData_accumulate.status.BME680Sensor || sensorData_accumulate.status.PMS5003Sensor || sensorData_accumulate.status.MICS6814Sensor || sensorData_accumulate.status.MICS4514Sensor || sensorData_accumulate.status.O3Sensor)
+    if (sensorData_accumulate.status.BME680Sensor || sensorData_accumulate.status.PMS5003Sensor || sensorData_accumulate.status.MICS6814Sensor || sensorData_accumulate.status.MICS4514Sensor || sensorData_accumulate.status.O3Sensor || sensorData_accumulate.status.MSP1Sensor)
     {
       log_i("Computing averages from %d measurements", measStat.measurement_count);
       log_i("Error counts: BME=%d, PMS=%d, MICS=%d, O3=%d", err.BMEfails, err.PMSfails, err.MICSfails, err.O3fails);
@@ -1391,6 +1684,14 @@ void loop()
             sensorData_accumulate.airQualityData.particleMicron25,
             sensorData_accumulate.pollutionData.carbonMonoxide);
     }
+
+    // Restore sensor status flags after averaging (ALWAYS runs, outside the if-block above).
+    // performAverages() clears a sensor's status when all readings failed (runs == 0).
+    // sensorData_single.status is the authoritative hardware-detection state (set at boot,
+    // never cleared by the measurement loop). Restoring here, unconditionally, breaks the
+    // feedback loop where a previously-cleared accumulate.status causes the if-block to be
+    // skipped entirely, leaving the status permanently false and sensors unreadable.
+    sensorData_accumulate.status = sensorData_single.status;
 
     // MSP# Index evaluation
     sensorData_accumulate.MSP = sHalSensor_evaluateMSPIndex(&sensorData_accumulate);
@@ -1426,6 +1727,30 @@ void loop()
       sendData.MICS_NH3 = sensorData_accumulate.pollutionData.ammonia;
       break;
 
+    case GAS_SENSOR_MSP1:
+    {
+      // Finalise this window's accumulated NAU7802 samples: resets the raw
+      // ADC accumulator for the next window and refreshes no2.rno2_ohm for
+      // anything else that reads it (e.g. debug logging). Not the source of
+      // the sent value below — see next comment.
+      tMsp1_computeSensorAverage();
+      tMsp1_computeRno2();
+
+      // Send the average of this window's per-measurement Rno2/R0 readings
+      // (summed via += in SYS_STATE_READ_SENSORS, same convention as
+      // MICS6814/4514's pollutionData.nitrogenDioxide) rather than a single
+      // fresh reading — unitless ratio instead of a NO2 concentration since
+      // MSP1 has no datasheet-backed ppm conversion yet, and unlike
+      // MICS6814/4514 this value is never humidity/temperature/pressure-
+      // compensated.
+      // The division by the successful reads already happened in
+      // performAverages() above, exactly like every other sensor.
+      sendData.MICS_CO = 0.0;
+      sendData.MICS_NO2 = sensorData_accumulate.pollutionData.nitrogenDioxide;
+      sendData.MICS_NH3 = 0.0;
+      break;
+    }
+
     default:
       // Default to zero if no gas sensor configured
       sendData.MICS_CO = 0.0;
@@ -1459,10 +1784,10 @@ void loop()
     }
 
     // Enqueue data for transmission by network task
-    if (enqueueSendData(sendData, pdMS_TO_TICKS(500)))
+    if (enqueueSendData(sendData, pdMS_TO_TICKS(SEND_QUEUE_TIMEOUT_MS)))
     {
       log_i("Data enqueued successfully for network transmission");
-      measStat.data_transmitted = true;                                // Mark data as transmitted for this cycle
+      measStat.data_transmitted = true;                                  // Mark data as transmitted for this cycle
       measStat.last_transmission_epoch = mktime(&sendData.sendTimeInfo); // Record epoch time to prevent duplicates
       log_i("Recorded transmission epoch %lld (%02d:%02d) to prevent duplicates",
             (long long)measStat.last_transmission_epoch, sendData.sendTimeInfo.tm_hour, sendData.sendTimeInfo.tm_min);
@@ -1472,8 +1797,9 @@ void loop()
       log_e("Failed to enqueue data for transmission - queue might be full");
     }
 
-    // show the averaged data after transmission
-    vMsp_updateDataAndSendEvent(DISP_EVENT_SHOW_MEAS_DATA, &sensorData_accumulate, &devinfo, &measStat, &sysData, &sysStat);
+    // Display always shows the latest instant reading (sensorData_single).
+    // The averaged data was sent to the server; the display is not updated with averages.
+    vMsp_updateDataAndSendEvent(DISP_EVENT_SHOW_MEAS_DATA, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
 
     log_i("Data transmission time: %02d:%02d:%02d", sendData.sendTimeInfo.tm_hour, sendData.sendTimeInfo.tm_min, sendData.sendTimeInfo.tm_sec);
     log_i("temp: %.2f, hum: %.2f, pre: %.2f, VOC: %.2f, PM1: %d, PM25: %d, PM10: %d, MICS_CO: %.2f, MICS_NO2: %.2f, MICS_NH3: %.2f, ozone: %.2f, MSP: %d, measurement_count: %d vs %d",
@@ -1511,38 +1837,29 @@ void loop()
     sensorData_accumulate.mics4514AdcAccumulator.oxVoltageSum = 0;
     sensorData_accumulate.mics4514AdcAccumulator.redVoltageSum = 0;
 
-    // Reset single measurement data
-    sensorData_single.gasData.temperature = 0.0f;
-    sensorData_single.gasData.pressure = 0.0f;
-    sensorData_single.gasData.humidity = 0.0f;
-    sensorData_single.gasData.volatileOrganicCompounds = 0.0f;
-    sensorData_single.airQualityData.particleMicron1 = 0.0f;
-    sensorData_single.airQualityData.particleMicron25 = 0.0f;
-    sensorData_single.airQualityData.particleMicron10 = 0.0f;
-    sensorData_single.pollutionData.carbonMonoxide = 0.0f;
-    sensorData_single.pollutionData.nitrogenDioxide = 0.0f;
-    sensorData_single.pollutionData.ammonia = 0.0f;
-    sensorData_single.ozoneData.ozone = 0.0f;
+    // sensorData_single is NOT reset here.
+    // It holds the last valid single reading and continues to be shown on the display
+    // until the next READ_SENSORS cycle overwrites it with fresh values.
+    // Resetting it here caused the display to show 0.0 / "--" between SEND_DATA and the
+    // first measurement of the next cycle.
 
-    // After transmission, system is now aligned - next cycles will be full measurements
-    log_i("Data enqueued successfully. System now aligned - next cycles will collect %d measurements", measStat.max_measurements);
-    log_i("Note: Server config from this transmission will be applied in next cycle");
+    log_i("Transmission complete. Next cycle will collect %d measurements (1 per minute).", measStat.avg_measurements);
 
     mainStateMachine.prev_state = SYS_STATE_SEND_DATA;
     mainStateMachine.next_state = SYS_STATE_UPDATE_CONFIG_FROM_SERVER; // Check for server config from PREVIOUS transmission
     break;
   }
-  //------------------------------------------------------------------------------------------------------------------------
-  //------------------------------------------------------------------------------------------------------------------------
   case SYS_STATE_ERROR:
   {
     vMsp_updateDataAndSendEvent(DISP_EVENT_SYSTEM_ERROR, &sensorData_single, &devinfo, &measStat, &sysData, &sysStat);
-    log_e("System in error state! Waiting for reset...");
-    vTaskDelay(portMAX_DELAY);
+    log_e("System in error state! Manual reset required.");
+    while (true)
+    {
+      esp_task_wdt_reset(); // keep WDT fed — this state requires manual intervention
+      vTaskDelay(pdMS_TO_TICKS(10000));
+    }
     break;
   }
-  //------------------------------------------------------------------------------------------------------------------------
-  //------------------------------------------------------------------------------------------------------------------------
   default:
   {
     log_e("Unknown state %d!", mainStateMachine.current_state);
@@ -1568,6 +1885,15 @@ void vMspInit_sensorStatusAndData(sensorData_t *p_tData)
   p_tData->status.MICS6814Sensor = DISABLED;
   p_tData->status.MICS4514Sensor = DISABLED;
   p_tData->status.O3Sensor = DISABLED;
+  p_tData->status.MSP1Sensor = DISABLED;
+
+  // -- no per-measurement read faults yet
+  p_tData->fault.BME680Sensor = DISABLED;
+  p_tData->fault.PMS5003Sensor = DISABLED;
+  p_tData->fault.MICS6814Sensor = DISABLED;
+  p_tData->fault.MICS4514Sensor = DISABLED;
+  p_tData->fault.O3Sensor = DISABLED;
+  p_tData->fault.MSP1Sensor = DISABLED;
 
   // -- set gas sensor default values
   p_tData->gasData.humidity = 0.0;
@@ -1628,7 +1954,7 @@ void vMspInit_NetworkAndMeasInfo(void)
 void vMspInit_MeasInfo(void)
 {
   memset(&measStat, 0, sizeof(deviceMeasurement_t));
-  measStat.avg_measurements = 1;
+  measStat.avg_measurements = AVG_MEASUREMENTS_MIN;
   measStat.isPmsAwake = false;
   measStat.isSensorDataAvailable = false;
   measStat.last_transmission_epoch = 0; // 0 = never transmitted
@@ -1658,17 +1984,17 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
     // Network defaults
     if (devInfo->ssid.length() == 0)
     {
-      devInfo->ssid = "DefaultSSID";
+      devInfo->ssid = DEFAULT_WIFI_SSID;
       log_i("Applied default WiFi SSID");
     }
     if (devInfo->passw.length() == 0)
     {
-      devInfo->passw = "DefaultPass";
+      devInfo->passw = DEFAULT_WIFI_PASSWORD;
       log_i("Applied default WiFi password");
     }
     if (devInfo->apn.length() == 0)
     {
-      devInfo->apn = "internet";
+      devInfo->apn = DEFAULT_MODEM_APN;
       log_i("Applied default APN");
     }
 
@@ -1680,7 +2006,7 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
       sysStat->server_ok = true;
       log_i("Applied compile-time API server: %s", sysData->server.c_str());
 #else
-      sysData->server = "milanosmartpark.info";
+      sysData->server = FALLBACK_API_SERVER;
       sysStat->server_ok = true;
       log_w("Applied fallback server: %s", sysData->server.c_str());
 #endif
@@ -1716,7 +2042,7 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
       {
         log_w("Invalid avg_measurements (%d): must be submultiple of 60. Valid values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60", measStat->avg_measurements);
       }
-      measStat->avg_measurements = 5; // Default to 5 measurements
+      measStat->avg_measurements = AVG_MEASUREMENTS_DEFAULT;
       log_i("Applied default avg_measurements: %d", measStat->avg_measurements);
     }
 
@@ -1726,15 +2052,15 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
       sysData->ntp_server = NTP_SERVER_DEFAULT;
       log_i("Applied default NTP server: %s", sysData->ntp_server.c_str());
     }
-    #ifdef FORCE_TIMEZONE_GMT0
+#ifdef FORCE_TIMEZONE_GMT0
     sysData->timezone = TZ_DEFAULT;
-    #else
+#else
     if (sysData->timezone.length() == 0)
     {
       sysData->timezone = TZ_DEFAULT;
       log_i("Applied default timezone: %s", sysData->timezone.c_str());
     }
-    #endif
+#endif
   }
   else
   {
@@ -1761,7 +2087,7 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
       {
         log_w("Invalid avg_measurements (%d): must be submultiple of 60. Valid values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60. Setting to 5", measStat->avg_measurements);
       }
-      measStat->avg_measurements = 5;
+      measStat->avg_measurements = AVG_MEASUREMENTS_DEFAULT;
     }
 
     // Ensure server_ok flag is set if server is configured
@@ -1776,7 +2102,7 @@ void vMspInit_configureSystemFromSD(systemData_t *sysData, systemStatus_t *sysSt
 #ifdef VERSION_STRING
   sysData->ver = VERSION_STRING;
 #else
-  sysData->ver = "DEV";
+  sysData->ver = DEFAULT_FW_VERSION;
 #endif
 
   log_i("System configuration completed successfully");
@@ -1792,14 +2118,13 @@ void vMspInit_setDefaultNtpTimezoneStatus(systemData_t *p_tData)
 void vMsp_setGpioPins(void)
 {
   // SET PIN MODES ++++++++++++++++++++++++++++++++++++
-  pinMode(33, OUTPUT);
-  pinMode(26, OUTPUT);
-  pinMode(25, OUTPUT);
+  pinMode(SPARE_OUT_PIN_1, OUTPUT);
+  pinMode(SPARE_OUT_PIN_2, OUTPUT);
+  pinMode(SPARE_OUT_PIN_3, OUTPUT);
   pinMode(O3_ADC_PIN, INPUT_PULLDOWN);
   analogSetAttenuation(ADC_11db);
   pinMode(MODEM_RST, OUTPUT);
   digitalWrite(MODEM_RST, HIGH);
-  //+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 }
 
 /**
@@ -1812,12 +2137,12 @@ void vMsp_scanI2CDevices(void)
 
   int deviceCount = 0;
 
-  for (uint8_t address = 1; address < 127; address++)
+  for (uint8_t address = I2C_SCAN_ADDR_MIN; address < I2C_SCAN_ADDR_MAX; address++)
   {
     Wire.beginTransmission(address);
     uint8_t error = Wire.endTransmission();
 
-    if (error == 0)
+    if (error == I2C_RESULT_SUCCESS)
     {
       log_i("I2C device found at address 0x%02X (%d decimal)", address, address);
       deviceCount++;
@@ -1825,26 +2150,26 @@ void vMsp_scanI2CDevices(void)
       // Add known device identification
       switch (address)
       {
-      case 0x77:
-        log_i("  -> Likely BME680 (address 0x77)");
+      case BME68X_I2C_ADDR_HIGH:
+        log_i("  -> Likely BME680 (address 0x%02X)", BME68X_I2C_ADDR_HIGH);
         break;
-      case 0x76:
-        log_i("  -> Likely BME680 alternative address (0x76)");
+      case BME68X_I2C_ADDR_LOW:
+        log_i("  -> Likely BME680 alternative address (0x%02X)", BME68X_I2C_ADDR_LOW);
         break;
-      case 0x04:
-        log_i("  -> Likely MICS6814 (address 0x04)");
+      case MICS6814_I2C_ADDR:
+        log_i("  -> Likely MICS6814 (address 0x%02X)", MICS6814_I2C_ADDR);
         break;
-      case 0x75:
-        log_i("  -> Likely MICS4514/DFRobot SEN0377 (address 0x75)");
+      case MICS4514_I2C_ADDR:
+        log_i("  -> Likely MICS4514/DFRobot SEN0377 (address 0x%02X)", MICS4514_I2C_ADDR);
         break;
-      case 0x3C:
-      case 0x3D:
+      case OLED_I2C_ADDR_PRIMARY:
+      case OLED_I2C_ADDR_SECONDARY:
         log_i("  -> Likely OLED Display (address 0x%02X)", address);
         break;
-      case 0x48:
-      case 0x49:
-      case 0x4A:
-      case 0x4B:
+      case ADS1X15_I2C_ADDR_GND:
+      case ADS1X15_I2C_ADDR_VDD:
+      case ADS1X15_I2C_ADDR_SDA:
+      case ADS1X15_I2C_ADDR_SCL:
         log_i("  -> Likely ADS1115/ADS1015 ADC (address 0x%02X)", address);
         break;
       default:
@@ -1852,7 +2177,7 @@ void vMsp_scanI2CDevices(void)
         break;
       }
     }
-    else if (error == 4)
+    else if (error == I2C_RESULT_OTHER_ERROR)
     {
       log_e("Unknown error at address 0x%02X", address);
     }

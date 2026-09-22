@@ -33,6 +33,12 @@
 // -- Network Configuration Constants
 #define TIME_SYNC_MAX_RETRY 5
 
+// Consecutive DNS test failures (periodic checks run every 30s) tolerated while
+// WiFi is still associated before forcing a full reconnection. The AP link can
+// survive a router/DHCP hiccup while lwIP loses its DNS server configuration:
+// in that state every lookup fails until the connection is rebuilt from scratch.
+#define DNS_FAILURE_RECONNECT_THRESHOLD 4
+
 // Modem buffer configuration
 #if !defined(TINY_GSM_RX_BUFFER)
 #define TINY_GSM_RX_BUFFER 650
@@ -72,6 +78,7 @@ static struct
     bool configurationLoaded;
     int ntpSyncExpired;              // Counter for NTP sync expiration
     bool firmwareDownloadInProgress; // Flag to skip connectivity checks during firmware download
+    int dnsFailCount;                // Consecutive failed DNS tests while WiFi is still associated
 } networkState = {
     .wifiConnected = false,
     .gsmConnected = false,
@@ -84,7 +91,8 @@ static struct
     .taskRunning = false,
     .configurationLoaded = false,
     .ntpSyncExpired = NTP_SYNC_TX_COUNT, // Initialize with default count
-    .firmwareDownloadInProgress = false
+    .firmwareDownloadInProgress = false,
+    .dnsFailCount = 0
 };
 
 // Global instances (properly managed within task)
@@ -559,6 +567,7 @@ static void cleanupNetworkResources()
         networkState.internetConnected = false;
         networkState.timeSync = false;
         networkState.connectionRetries = 0;
+        networkState.dnsFailCount = 0;
         xSemaphoreGive(networkStateMutex);
     }
 
@@ -921,7 +930,7 @@ static bool syncDateTime(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
         sysData->currentDataTime = String(sysData->Date) + " " + String(sysData->Time);
 
         log_i("Time synchronized successfully: %s", sysData->currentDataTime.c_str());
-        updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_DATETIME_OK);
+        updateDisplayStatus(devInfo, sysStatus, DISP_EVENT_DATETIME_OK, sysData);
 
         // Update state
         if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
@@ -1020,14 +1029,24 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
     log_i("Sending data to server: %s", sysData->server.c_str());
     log_i("Device ID: %s", devInfo->deviceid.c_str());
 
-    // Step 1: Ping server to verify connectivity before data transmission only if there is no GSM connection active
-    if ( (false == pingServer(sysData->server)) && (sysStatus->use_modem == false))
+    // Step 1: Ping server to verify connectivity before data transmission (WiFi only).
+    // pingServer() uses HTTPClient/WiFiClientSecure, i.e. the lwIP/WiFi stack, so it cannot
+    // succeed over GSM where traffic goes through SSLClient/TinyGsmClient (modem TCP/DNS).
+    // In GSM mode a send session is: establish GPRS -> send -> disconnect, so the connection
+    // itself is the connectivity proof and a separate ping would only waste its timeout.
+    if (sysStatus->use_modem == false)
     {
-        log_e("Server ping failed - aborting data transmission to prevent timeouts");
-        return false;
+        if (false == pingServer(sysData->server))
+        {
+            log_e("Server ping failed - aborting data transmission to prevent timeouts");
+            return false;
+        }
+        log_i("Server ping successful - proceeding with data transmission");
     }
-
-    log_i("Server ping successful - proceeding with data transmission");
+    else
+    {
+        log_i("GSM connection active - skipping WiFi-stack server ping");
+    }
 
     // Set SSL verification time
     time_t epochTime = mktime(&dataToSend->sendTimeInfo);
@@ -1064,11 +1083,18 @@ static bool sendDataToServer(send_data_t *dataToSend, deviceNetworkInfo_t *devIn
     // MICS6814 data (include if any gas reading is positive)
     if ((dataToSend->MICS_CO >= 0.0) || (dataToSend->MICS_NO2 >= 0.0) || (dataToSend->MICS_NH3 >= 0.0))
     {
+        /* NO2 goes out at full float precision (%.7g — every significant digit
+         * a float holds, no trailing zeroes): with MSP1 this field carries the
+         * Rno2/R0 ratio, whose useful variation is well below the 3 decimals
+         * used for the other gases. */
+        char noxBuf[16];
+        snprintf(noxBuf, sizeof(noxBuf), "%.7g", dataToSend->MICS_NO2);
+
         postData += "&cox=" + String(dataToSend->MICS_CO, 3);
-        postData += "&nox=" + String(dataToSend->MICS_NO2, 3);
+        postData += "&nox=" + String(noxBuf);
         postData += "&nh3=" + String(dataToSend->MICS_NH3, 3);
-        log_d("Added MICS6814 data: CO=%.3f, NO2=%.3f, NH3=%.3f",
-              dataToSend->MICS_CO, dataToSend->MICS_NO2, dataToSend->MICS_NH3);
+        log_d("Added MICS6814 data: CO=%.3f, NO2=%s, NH3=%.3f",
+              dataToSend->MICS_CO, noxBuf, dataToSend->MICS_NH3);
     }
 
     // PMS5003 data (include if any PM reading is positive)
@@ -1532,6 +1558,8 @@ static void networkTask(void *pvParameters)
                     log_v("Skipping connectivity test - firmware download in progress");
                 }
 
+                bool dnsRecoveryNeeded = false;
+
                 if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(100)) == pdTRUE)
                 {
                     // Update connection status if changed
@@ -1559,7 +1587,47 @@ static void networkTask(void *pvParameters)
                         }
                     }
 
+                    // Track consecutive DNS test failures while WiFi is still associated.
+                    // The connection looks healthy (WL_CONNECTED) but no hostname resolves,
+                    // so without intervention the node stays in this state until a reboot.
+                    if (wifiConnected && !internetConnected && !networkState.firmwareDownloadInProgress)
+                    {
+                        networkState.dnsFailCount++;
+                        log_w("DNS test failed %d/%d times while WiFi associated (current DNS: %s)",
+                              networkState.dnsFailCount, DNS_FAILURE_RECONNECT_THRESHOLD,
+                              WiFi.dnsIP().toString().c_str());
+
+                        if (networkState.dnsFailCount >= DNS_FAILURE_RECONNECT_THRESHOLD)
+                        {
+                            networkState.dnsFailCount = 0;
+                            dnsRecoveryNeeded = true;
+                        }
+                    }
+                    else
+                    {
+                        networkState.dnsFailCount = 0;
+                    }
+
                     xSemaphoreGive(networkStateMutex);
+                }
+
+                if (dnsRecoveryNeeded)
+                {
+                    log_e("Persistent DNS failure with WiFi associated - forcing full WiFi reconnection to restore DNS");
+
+                    WiFi.disconnect();
+                    WiFi.mode(WIFI_OFF);
+                    delay(1000);
+
+                    if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+                    {
+                        networkState.wifiConnected = false;
+                        networkState.internetConnected = false;
+                        xSemaphoreGive(networkStateMutex);
+                    }
+                    sysStatus.connection = false;
+
+                    updateNetworkState(NETWRK_EVT_INIT_CONNECTION);
                 }
             }
             break;
@@ -1744,7 +1812,8 @@ static void networkTask(void *pvParameters)
             }
 
             // Process all queued data with detailed timing analysis
-            int processedCount = 0;
+            int dequeuedCount = 0;  // items pulled from the queue this round
+            int processedCount = 0; // items sent successfully this round
             int failedCount = 0;
             send_data_t currentData;
 
@@ -1768,12 +1837,24 @@ static void networkTask(void *pvParameters)
                 log_w("Queue contains %d items - each will be processed individually", initialQueueSize);
             }
 
+            // Drain the queue completely: keep sending until no items remain, including
+            // items enqueued by the measurement task while we were sending. The modem
+            // disconnect below runs only after this loop exits (queue empty), so a GSM
+            // send session is: establish GPRS -> transmit the WHOLE queue -> disconnect.
+            // In steady state the queue holds a single item, so this naturally reduces to
+            // connect -> send one -> disconnect ("torniamo a lavorare normalmente").
+            // The loop continues only while sends SUCCEED; any failure (or unmet send
+            // conditions) re-queues the item and breaks, returning to WAIT so periodic
+            // maintenance runs (DNS watchdog, NTP resync) and, for GSM, the session is
+            // closed and re-established fresh on the next round.
             while (dequeueSendData(&currentData, 0))
             { // Non-blocking dequeue
-                processedCount++;
+                dequeuedCount++;
                 int remainingItems = uxQueueMessagesWaiting(sendDataQueue);
 
-                log_i("=== PROCESSING ITEM %d/%d ===", processedCount, initialQueueSize);
+                // Running counter + live remaining; no fixed denominator, since the queue
+                // keeps being fed while we drain (avoids the misleading "item 431/290").
+                log_i("=== PROCESSING ITEM #%d ===", dequeuedCount);
                 log_i("Queue items remaining: %d", remainingItems);
 
                 // Analyze the data timestamp vs current time
@@ -1835,6 +1916,18 @@ static void networkTask(void *pvParameters)
                     log_w("Cannot send data - conditions not met: WiFi=%d, GSM=%d, TimeSync=%d, ServerOK=%d",
                           networkState.wifiConnected, networkState.gsmConnected,
                           networkState.timeSync, sysStatus.server_ok);
+
+                    failedCount++;
+
+                    // Re-queue the item so it is not lost (it was already dequeued above).
+                    if (!enqueueSendData(currentData, pdMS_TO_TICKS(1000)))
+                    {
+                        log_e("Failed to re-queue data, data lost!");
+                    }
+
+                    // Conditions will not improve within this loop - stop to avoid
+                    // dequeuing and re-queuing the remaining items in a tight spin.
+                    break;
                 }
 
                 // SD card logging removed from here - data is now logged immediately after sensor reading
@@ -1848,22 +1941,28 @@ static void networkTask(void *pvParameters)
                 memset(&localSensorData, 0, sizeof(sensorData_t));
                 vHalSensor_printMeasurementsOnSerial(&currentData, &localSensorData);
 
-                // Handle modem disconnection for power saving
-                if ((sysStatus.use_modem) && ((networkState.gsmConnected) || (modem)))
-                {
-                    if (vHalNetwork_modemDisconnect())
-                    {
-                        if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
-                        {
-                            networkState.gsmConnected = false;
-                            xSemaphoreGive(networkStateMutex);
-                        }
-                        log_i("Modem disconnected to save power");
-                    }
-                }
-
                 // Small delay between transmissions
                 delay(100);
+            }
+
+            // Handle modem disconnection for power saving - only once the queue has been
+            // fully drained (or the loop broke on failure). A GSM send session is therefore:
+            // establish GPRS -> transmit every queued item -> disconnect. The connection is
+            // kept open across all confirmed sends; doing the disconnect per-item would clear
+            // gsmConnected and make every subsequent item fail the canSendData check. On an
+            // early break (send failure) the session is closed too, so it is re-established
+            // fresh on the next round.
+            if ((sysStatus.use_modem) && ((networkState.gsmConnected) || (modem)))
+            {
+                if (vHalNetwork_modemDisconnect())
+                {
+                    if (xSemaphoreTake(networkStateMutex, pdMS_TO_TICKS(1000)) == pdTRUE)
+                    {
+                        networkState.gsmConnected = false;
+                        xSemaphoreGive(networkStateMutex);
+                    }
+                    log_i("Modem disconnected to save power");
+                }
             }
 
             // Queue processing completion summary
@@ -1890,7 +1989,7 @@ static void networkTask(void *pvParameters)
 
             // Manually clear the NET_EVT_DATA_READY bit now that we've finished processing all data
             xEventGroupClearBits(networkEventGroup, NET_EVT_DATA_READY);
-            log_d("NET_EVT_DATA_READY bit cleared after processing %d items", processedCount + failedCount);
+            log_d("NET_EVT_DATA_READY bit cleared after processing %d items", dequeuedCount);
 
             updateNetworkState(NETWRK_EVT_WAIT);
             break;

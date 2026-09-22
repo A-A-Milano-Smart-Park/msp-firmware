@@ -51,6 +51,10 @@ typedef enum _DISPLAY_EVENTS_
   DISP_EVENT_MICSxx14_DONE,
   DISP_EVENT_MICSxx14_SENSOR_ERR,
   DISP_EVENT_MICSxx14_HEATING_UP,
+  // MSP1 Sensor
+  DISP_EVENT_MSP1_SENSOR_INIT,
+  DISP_EVENT_MSP1_SENSOR_OKAY,
+  DISP_EVENT_MSP1_SENSOR_ERR,
 
   DISP_EVENT_O3_SENSOR_INIT,
   DISP_EVENT_O3_SENSOR_OKAY,
@@ -99,6 +103,8 @@ typedef struct _DISP_TASK_DATA_
   deviceNetworkInfo_t devInfo;  /*!< Device network information to be displayed */
   systemData_t sysData;         /*!< System data to be displayed */
   deviceMeasurement_t measStat; /*!< Device measurement status to be displayed */
+  uint8_t hasSensorData;           /*!< True when sensorData carries valid readings; display task preserves existing sensorData when false */
+  uint8_t hasSysData;              /*!< True when sysData carries valid contents; display task preserves existing sysData when false */
 } displayData_t;
 
 /*********************************************************

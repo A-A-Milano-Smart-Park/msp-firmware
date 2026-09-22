@@ -79,5 +79,15 @@ bool bGeneric_floatGreaterThan(float a, float b, float epsilon = 0.001f);
  ***********************************************************/
 bool bGeneric_floatLessThan(float a, float b, float epsilon = 0.001f);
 
+/************************************************************
+ * @brief   returns the human-readable name of a gas sensor type.
+ *          Single source of truth for every log/display/JSON label:
+ *          add a new gas_sensor_type_t here and nowhere else.
+ *
+ * @param   gasSensorType  value of tSysStatus::gasSensorType
+ * @return  const char*    sensor name, or "Unknown" if out of range
+ ***********************************************************/
+const char *pcGeneric_gasSensorName(uint8_t gasSensorType);
+
 
 #endif

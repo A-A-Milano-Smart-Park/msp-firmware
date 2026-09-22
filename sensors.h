@@ -68,7 +68,6 @@ class DFRobot_MICS;
 
 // Sensor reading retry constants
 #define MAX_SENSOR_RETRIES          3                  // Maximum number of retry attempts
-#define ROUNDING_THRESHOLD          0.5f               // Threshold for rounding operations
 
 // Default calibration values as floats
 #define R0_RED_SENSOR_F             955.0f             // Default R0 for red sensor (CO)

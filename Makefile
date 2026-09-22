@@ -19,7 +19,9 @@ LIBRARIES := \
 	ArduinoJson@7.4.2
 LIBRARIES_URLS := \
 	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library \
-	https://github.com/DFRobot/DFRobot_MICS
+	https://github.com/DFRobot/DFRobot_MICS \
+	https://github.com/adafruit/Adafruit_NAU7802 \
+	https://github.com/adafruit/Adafruit_MCP4725
 
 # The FQBN is the core, followed by the board.
 CORE_NAME := $(shell echo $(CORE) | cut -f1 -d@)
@@ -77,7 +79,7 @@ export ARDUINO_DATA_DIR = $(VARDIR)
 
 ################################################################################
 
-.PHONY: all help env print-core-version properties lint build upload clean clean-all
+.PHONY: all help env print-core-version properties lint build upload ide clean clean-all
 
 all: build
 
@@ -95,8 +97,9 @@ help:
 	@echo "   lint       Validate the sketch with arduino-lint."
 	@echo "   build      Compile the sketch (default: 8MB flash)."
 	@echo "   upload     Upload to the board."
-	@echo "   clean      Remove only files ignored by Git."
-	@echo "   clean-all  Remove all untracked files."
+	@echo "   ide        Regenerate .vscode/compile_commands.json for IntelliSense."
+	@echo "   clean      Remove build artifacts only (var/build)."
+	@echo "   clean-all  Remove build artifacts and the Arduino environment (bin, etc, var)."
 	@echo
 	@echo "Flash Size Options:"
 	@echo "   make build FLASH_SIZE=4MB   Build for 4MB ESP32 (1.75MB app x2, dual OTA, no SPIFFS)"
@@ -222,6 +225,20 @@ $(BUILDDIR)/$(SKETCH).ino.elf: $(SRCS)
 
 build: $(BUILDDIR)/$(SKETCH).ino.elf
 	rm -rf $(SRCDIR)/build
+	$(MAKE) ide
+
+##
+# Rewrite arduino-cli's compile_commands.json so its entries point at the real
+# sources in the repo root instead of the copies in var/build/sketch/.
+# Without this, cpptools finds no entry for sdCard.cpp & co. and IntelliSense
+# falls back to a bare host clang, which fails on <Arduino.h> (empty Outline).
+##
+ide:
+	command -v jq >/dev/null || { echo "jq not found, skipping IntelliSense DB"; exit 0; }
+	mkdir -p $(SRCDIR)/.vscode
+	jq '[ .[] | if (.file // "" | test("/var/build/sketch/[^/]+$$")) then (.file |= (sub("/var/build/sketch/";"/") | sub("\\.ino\\.cpp$$";".ino"))) | (if .command then .command |= gsub("/var/build/sketch/";"/") else . end) else . end ]' \
+		$(BUILDDIR)/compile_commands.json > $(SRCDIR)/.vscode/compile_commands.json
+	echo "IntelliSense DB: .vscode/compile_commands.json"
 
 upload: build
 	$(BINDIR)/arduino-cli --config-file $(ETCDIR)/arduino-cli.yaml upload \
@@ -232,6 +249,6 @@ clean:
 	rm -rf $(BUILDDIR)
 
 clean-all:
-	git clean -dxf
+	rm -rf $(BINDIR) $(ETCDIR) $(VARDIR)
 
 ################################################################################

@@ -15,8 +15,10 @@
 #include "display.h"
 #include "display_task.h"
 #include "mspOs.h"
+#include "msp1.h"
 #include <Wire.h>
 #include <U8g2lib.h>
+#include <time.h>
 
 // -- defines --
 #define XBM_X_POS_MSPICON 0
@@ -108,6 +110,7 @@ void vHalDisplay_initSerialAndI2c(void)
   Serial.begin(115200);
   delay(2000); // give time to serial to initialize properly
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  u8g2.setBusClock(100000); // SH1106 driver defaults to 400kHz; bus is shared with NAU7802/MCP4725, keep it at 100kHz
   u8g2.begin();
 }
 
@@ -268,7 +271,11 @@ void vHalDisplay_drawBme680GasSensorData(sensorData_t *p_tData, systemStatus_t *
 
   // page 1
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
-  if (p_tData->status.BME680Sensor)
+  // "--" = sensor absent/disabled; "FAULT" = present but last measurement
+  // failed all retries (fault flag from SYS_STATE_READ_SENSORS) — never show
+  // the stale previous value as if it were fresh.
+  const char *bmeNa = p_tData->fault.BME680Sensor ? "FAULT" : "--";
+  if (p_tData->status.BME680Sensor && !p_tData->fault.BME680Sensor)
   {
     vGeneric_dspFloatToComma(p_tData->gasData.temperature, sensorStringData, sizeof(sensorStringData));
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
@@ -297,16 +304,20 @@ void vHalDisplay_drawBme680GasSensorData(sensorData_t *p_tData, systemStatus_t *
   else
   {
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
-    u8g2.print("Temp: --");
+    u8g2.print("Temp: ");
+    u8g2.print(bmeNa);
 
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
-    u8g2.print("Hum: --");
+    u8g2.print("Hum: ");
+    u8g2.print(bmeNa);
 
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L3);
-    u8g2.print("Pre: --");
+    u8g2.print("Pre: ");
+    u8g2.print(bmeNa);
 
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L4);
-    u8g2.print("VOC: --");
+    u8g2.print("VOC: ");
+    u8g2.print(bmeNa);
   }
   u8g2.sendBuffer();
   delay(secdelay * 1000);
@@ -326,7 +337,8 @@ void vHalDisplay_drawPMS5003AirQualitySensorData(sensorData_t *p_tData, systemSt
 
   // page 2
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
-  if (p_tData->status.PMS5003Sensor)
+  const char *pmsNa = p_tData->fault.PMS5003Sensor ? "FAULT" : "--";
+  if (p_tData->status.PMS5003Sensor && !p_tData->fault.PMS5003Sensor)
   {
     vGeneric_dspFloatToComma(p_tData->airQualityData.particleMicron1, sensorStringData, sizeof(sensorStringData));
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
@@ -349,13 +361,16 @@ void vHalDisplay_drawPMS5003AirQualitySensorData(sensorData_t *p_tData, systemSt
   else
   {
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
-    u8g2.print("PM1:--");
+    u8g2.print("PM1:");
+    u8g2.print(pmsNa);
 
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
-    u8g2.print("PM2,5:--");
+    u8g2.print("PM2,5:");
+    u8g2.print(pmsNa);
 
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L3);
-    u8g2.print("PM10:--");
+    u8g2.print("PM10:");
+    u8g2.print(pmsNa);
   }
   u8g2.sendBuffer();
   delay(secdelay * 1000);
@@ -374,7 +389,10 @@ void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData, systemSt
   char sensorStringData[SENSOR_DATA_STR_FMT_LEN] = {0};
 
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
-  if ((p_tData->status.MICS6814Sensor) || (p_tData->status.MICS4514Sensor))
+  // Only the enabled MICS variant ever gets its fault flag set
+  bool bMicsFault = p_tData->fault.MICS6814Sensor || p_tData->fault.MICS4514Sensor;
+  const char *micsNa = bMicsFault ? "FAULT" : "--";
+  if (((p_tData->status.MICS6814Sensor) || (p_tData->status.MICS4514Sensor)) && !bMicsFault)
   {
     vGeneric_dspFloatToComma(p_tData->pollutionData.carbonMonoxide, sensorStringData, sizeof(sensorStringData));
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
@@ -397,13 +415,16 @@ void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData, systemSt
   else
   {
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
-    u8g2.print("CO:--");
+    u8g2.print("CO:");
+    u8g2.print(micsNa);
 
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
-    u8g2.print("NOx:--");
+    u8g2.print("NOx:");
+    u8g2.print(micsNa);
 
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L3);
-    u8g2.print("NH3:--");
+    u8g2.print("NH3:");
+    u8g2.print(micsNa);
   }
   u8g2.sendBuffer();
   delay(secdelay * 1000);
@@ -423,7 +444,8 @@ void vHalDisplay_drawOzoneSensorData(sensorData_t *p_tData, systemStatus_t *stat
 
   // page 4
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
-  if (p_tData->status.O3Sensor)
+  const char *o3Na = p_tData->fault.O3Sensor ? "FAULT" : "--";
+  if (p_tData->status.O3Sensor && !p_tData->fault.O3Sensor)
   {
     vGeneric_dspFloatToComma(p_tData->ozoneData.ozone, sensorStringData, sizeof(sensorStringData));
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
@@ -434,7 +456,8 @@ void vHalDisplay_drawOzoneSensorData(sensorData_t *p_tData, systemStatus_t *stat
   else
   {
     u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
-    u8g2.print("O3:--");
+    u8g2.print("O3:");
+    u8g2.print(o3Na);
   }
   u8g2.sendBuffer();
   delay(secdelay * 1000);
@@ -459,6 +482,224 @@ void vHalDisplay_drawMspIndexData(sensorData_t *p_tData, systemStatus_t *statPtr
   u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
   u8g2.print("MSP:  ");
   u8g2.print(sensorStringData);
+  u8g2.sendBuffer();
+  delay(secdelay * 1000);
+}
+
+/************************************************************************************
+ * @brief function to draw the current date/time on the display, read fresh from the
+ *        system clock at render time (unlike DISP_EVENT_DATETIME_OK's one-shot
+ *        snapshot taken at NTP sync).
+ *
+ * @param statPtr
+ * @param devinfoPtr
+ * @param secdelay
+ ************************************************************************************/
+void vHalDisplay_drawCurrentDateTime(systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+{
+  struct tm timeinfo;
+  char dateStr[DATE_LEN] = {0};
+  char timeStr[TIME_LEN] = {0};
+
+  if (getLocalTime(&timeinfo))
+  {
+    strftime(dateStr, sizeof(dateStr), "%d/%m/%Y", &timeinfo);
+    strftime(timeStr, sizeof(timeStr), "%T", &timeinfo);
+  }
+  else
+  {
+    /* snprintf, not strncpy: "Time: --" is exactly TIME_LEN-1 chars, so strncpy
+     * copies the full 8 bytes without appending the terminator (it only relied
+     * on the zero-init above). snprintf always terminates and truncates safely. */
+    snprintf(dateStr, sizeof(dateStr), "Date: --");
+    snprintf(timeStr, sizeof(timeStr), "Time: --");
+  }
+
+  vHalDisplay_drawTwoLines(dateStr, timeStr, secdelay, statPtr, devinfoPtr);
+}
+
+/************************************************************************************
+ * @brief Draws the unavailable-sensor body shared by the three MSP1 pages, using
+ *        the same convention as every other sensor page: "--" when MSP1 was not
+ *        detected at boot, "FAULT" when it was but the last measurement failed.
+ *
+ * @return true when the page was drawn (caller must return), false when MSP1 is
+ *         healthy and the caller should draw its own values.
+ ************************************************************************************/
+static bool bHalDisplay_drawMsp1Unavailable(sensorData_t *p_tData, systemStatus_t *statPtr,
+                                            deviceNetworkInfo_t *devinfoPtr, const char *title,
+                                            short secdelay)
+{
+  if (p_tData->status.MSP1Sensor && !p_tData->fault.MSP1Sensor)
+  {
+    return false;
+  }
+
+  vHal_displayDrawScrHead(statPtr, devinfoPtr);
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
+  u8g2.print(title);
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
+  u8g2.print(p_tData->fault.MSP1Sensor ? "FAULT" : "--");
+  u8g2.sendBuffer();
+  delay(secdelay * 1000);
+  return true;
+}
+
+/************************************************************************************
+ * @brief Draws the MSP1 NAU7802 ADC sensor channel (CH0) raw and averaged voltage.
+ *        Part of the MSP1 page set (see also vHalDisplay_drawMsp1HeaterDacData and
+ *        vHalDisplay_drawMsp1Rno2Data) shown when GAS_SENSOR_MSP1 is configured or
+ *        when MSP1_DEBUG_ENABLE is defined.
+ *
+ * @param p_tData
+ * @param statPtr
+ * @param devinfoPtr
+ * @param secdelay
+ ************************************************************************************/
+void vHalDisplay_drawMsp1AdcSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+{
+  if (bHalDisplay_drawMsp1Unavailable(p_tData, statPtr, devinfoPtr, "ADC Sensor (CH0)", secdelay))
+  {
+    return;
+  }
+
+  /* Take a coherent snapshot under the data-access mutex: the MSP1 module is
+   * updated from another task, so we must not read its live state directly. */
+  msp1Data_t tMsp1Snapshot = {};
+  tMsp1_getDataCopy(&tMsp1Snapshot);
+  const msp1Data_t *p_tMsp1 = &tMsp1Snapshot;
+
+  // Sliding-window averaged voltage for sensor channel CH0
+  // (window depth MSP1_DISPLAY_AVG_SAMPLES, refreshed at every sample).
+  vHal_displayDrawScrHead(statPtr, devinfoPtr);
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
+  u8g2.print("ADC Sensor (CH0)");
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
+  u8g2.print("Avg: ");
+  if (p_tMsp1->sensor.saturated)
+  {
+    u8g2.print(">1950 [SAT]");
+  }
+  else
+  {
+    float fAvg_mV = 0.0f;
+    if (tMsp1_getDisplayAverages(&fAvg_mV, NULL, NULL) == STATUS_OK)
+    {
+      u8g2.print(fAvg_mV, 1);
+      u8g2.print(" mV");
+    }
+    else
+    {
+      u8g2.print("n/a");
+    }
+  }
+  u8g2.sendBuffer();
+  delay(secdelay * 1000);
+}
+
+/************************************************************************************
+ * @brief Draws the MSP1 heater channel CH1 readings and MCP4725 DAC setpoint.
+ *
+ * @param statPtr
+ * @param devinfoPtr
+ * @param secdelay
+ ************************************************************************************/
+void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+{
+  if (bHalDisplay_drawMsp1Unavailable(p_tData, statPtr, devinfoPtr, "Heater (CH1)/DAC", secdelay))
+  {
+    return;
+  }
+
+  msp1Data_t tMsp1Snapshot = {};
+  tMsp1_getDataCopy(&tMsp1Snapshot);
+  const msp1Data_t *p_tMsp1 = &tMsp1Snapshot;
+
+  // Ring-buffer averaged V_R14/current for heater channel CH1 and MCP4725 DAC setpoint
+  msp1Config_t tMsp1Cfg;
+  tMsp1_getConfig(&tMsp1Cfg);
+  const float fVdac_mV = ((float)p_tMsp1->heater.dacSetpoint / (float)MSP1_DAC_MAX_VALUE) * tMsp1Cfg.dacVdd_mV;
+  vHal_displayDrawScrHead(statPtr, devinfoPtr);
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
+  u8g2.print("Heater (CH1)/DAC");
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
+  float fAvgVr14_mV = 0.0f;
+  float fAvgI_mA = 0.0f;
+  u8g2.print("Avg: ");
+  if (tMsp1_getDisplayAverages(NULL, &fAvgVr14_mV, &fAvgI_mA) == STATUS_OK)
+  {
+    u8g2.print(fAvgVr14_mV, 1);
+    u8g2.print("mV I:");
+    u8g2.print(fAvgI_mA, 1);
+    u8g2.print(" mA");
+  }
+  else
+  {
+    u8g2.print("n/a");
+  }
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L3);
+  u8g2.print("VDAC: ");
+  u8g2.print(fVdac_mV, 1);
+  u8g2.print(" mV");
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L4);
+  u8g2.print("DAC: ");
+  u8g2.print(p_tMsp1->heater.dacSetpoint);
+  u8g2.sendBuffer();
+  delay(secdelay * 1000);
+}
+
+/************************************************************************************
+ * @brief Draws the MSP1 NO2 sensing resistance (Rno2) and ratio to baseline R0.
+ *
+ * @param statPtr
+ * @param devinfoPtr
+ * @param secdelay
+ ************************************************************************************/
+void vHalDisplay_drawMsp1Rno2Data(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+{
+  if (bHalDisplay_drawMsp1Unavailable(p_tData, statPtr, devinfoPtr, "NO2 Sensor (Rno2)", secdelay))
+  {
+    return;
+  }
+
+  // Live preview, not no2.rno2_ohm: that field is only finalised once per
+  // transmission window (SYS_STATE_SEND_DATA). The ring average is the same
+  // sliding window (MSP1_DISPLAY_AVG_SAMPLES) used for the transmitted
+  // per-measurement Rno2/R0 in SYS_STATE_READ_SENSORS, and for the "Avg" line
+  // on the ADC sensor page — one filter, one step response.
+  msp1Config_t tMsp1Cfg = {};
+  tMsp1_getConfig(&tMsp1Cfg);
+  float fLiveRno2_ohm = 0.0f;
+  bool bRno2Ready = (tMsp1_peekRno2Ring(&fLiveRno2_ohm) == STATUS_OK);
+  vHal_displayDrawScrHead(statPtr, devinfoPtr);
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
+  u8g2.print("NO2 Sensor (Rno2)");
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
+  u8g2.print("Rno2: ");
+  if (bRno2Ready)
+  {
+    u8g2.print(fLiveRno2_ohm, 0);
+    u8g2.print(" Ohm");
+  }
+  else
+  {
+    u8g2.print("n/a");
+  }
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L3);
+  u8g2.print("R0:   ");
+  u8g2.print(tMsp1Cfg.r0No2_ohm, 0);
+  u8g2.print(" Ohm");
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L4);
+  u8g2.print("Rno2/R0: ");
+  float fRno2Ratio = 0.0f;
+  if (tMsp1_peekRno2Ratio(&fRno2Ratio) == STATUS_OK)
+  {
+    u8g2.print(fRno2Ratio, 2);
+  }
+  else
+  {
+    u8g2.print("--");
+  }
   u8g2.sendBuffer();
   delay(secdelay * 1000);
 }
@@ -513,48 +754,54 @@ void vHalDisplay_drawConfigurationValues(sensorData_t *p_tData, systemStatus_t *
   u8g2.setCursor(2, 50);
   u8g2.print("FW upgrade: " + String(statPtr->fwAutoUpgrade ? "ON" : "OFF"));
   u8g2.setCursor(2, 61);
-  u8g2.print("Gas sensor: " + String(statPtr->gasSensorType == 0 ? "MICS6814" : "MICS4514"));
+  u8g2.print("Gas sensor: " + String(pcGeneric_gasSensorName(statPtr->gasSensorType)));
   u8g2.sendBuffer();
   delay(secDelay * 1000);
 
-  // Screen 2: MICS calibration values
-  vHal_displayDrawScrHead(statPtr, devinfoPtr);
-  u8g2.setCursor(2, 28);
-  u8g2.print("MICS Calibration:");
-  u8g2.setCursor(2, 39);
-  u8g2.print("RED: " + String(p_tData->micsTuningData.sensingResInAir.redSensor));
-  u8g2.setCursor(2, 50);
-  u8g2.print("OX:  " + String(p_tData->micsTuningData.sensingResInAir.oxSensor));
-  u8g2.setCursor(2, 61);
-  u8g2.print("NH3: " + String(p_tData->micsTuningData.sensingResInAir.nh3Sensor));
-  u8g2.sendBuffer();
-  delay(secDelay * 1000);
+  // Screens 2-4 (MICS calibration/offsets, environmental compensation) are
+  // meaningless for the MSP1 sensor: it has no MICS tuning data and its NO2
+  // reading is not humidity/temperature/pressure-compensated — skip them.
+  if (statPtr->gasSensorType != GAS_SENSOR_MSP1)
+  {
+    // Screen 2: MICS calibration values
+    vHal_displayDrawScrHead(statPtr, devinfoPtr);
+    u8g2.setCursor(2, 28);
+    u8g2.print("MICS Calibration:");
+    u8g2.setCursor(2, 39);
+    u8g2.print("RED: " + String(p_tData->micsTuningData.sensingResInAir.redSensor));
+    u8g2.setCursor(2, 50);
+    u8g2.print("OX:  " + String(p_tData->micsTuningData.sensingResInAir.oxSensor));
+    u8g2.setCursor(2, 61);
+    u8g2.print("NH3: " + String(p_tData->micsTuningData.sensingResInAir.nh3Sensor));
+    u8g2.sendBuffer();
+    delay(secDelay * 1000);
 
-  // Screen 3: MICS measurement offsets
-  vHal_displayDrawScrHead(statPtr, devinfoPtr);
-  u8g2.setCursor(2, 28);
-  u8g2.print("MICS Offsets:");
-  u8g2.setCursor(2, 39);
-  u8g2.print("RED: " + String(p_tData->micsTuningData.sensingResInAirOffset.redSensor));
-  u8g2.setCursor(2, 50);
-  u8g2.print("OX:  " + String(p_tData->micsTuningData.sensingResInAirOffset.oxSensor));
-  u8g2.setCursor(2, 61);
-  u8g2.print("NH3: " + String(p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor));
-  u8g2.sendBuffer();
-  delay(secDelay * 1000);
+    // Screen 3: MICS measurement offsets
+    vHal_displayDrawScrHead(statPtr, devinfoPtr);
+    u8g2.setCursor(2, 28);
+    u8g2.print("MICS Offsets:");
+    u8g2.setCursor(2, 39);
+    u8g2.print("RED: " + String(p_tData->micsTuningData.sensingResInAirOffset.redSensor));
+    u8g2.setCursor(2, 50);
+    u8g2.print("OX:  " + String(p_tData->micsTuningData.sensingResInAirOffset.oxSensor));
+    u8g2.setCursor(2, 61);
+    u8g2.print("NH3: " + String(p_tData->micsTuningData.sensingResInAirOffset.nh3Sensor));
+    u8g2.sendBuffer();
+    delay(secDelay * 1000);
 
-  // Screen 4: Compensation factors
-  vHal_displayDrawScrHead(statPtr, devinfoPtr);
-  u8g2.setCursor(2, 28);
-  u8g2.print("Compensation:");
-  u8g2.setCursor(2, 39);
-  u8g2.print("H: " + String(p_tData->compParams.currentHumidity, 3));
-  u8g2.setCursor(2, 50);
-  u8g2.print("T: " + String(p_tData->compParams.currentTemperature, 3));
-  u8g2.setCursor(2, 61);
-  u8g2.print("P: " + String(p_tData->compParams.currentPressure, 6));
-  u8g2.sendBuffer();
-  delay(secDelay * 1000);
+    // Screen 4: Compensation factors
+    vHal_displayDrawScrHead(statPtr, devinfoPtr);
+    u8g2.setCursor(2, 28);
+    u8g2.print("Compensation:");
+    u8g2.setCursor(2, 39);
+    u8g2.print("H: " + String(p_tData->compParams.currentHumidity, 3));
+    u8g2.setCursor(2, 50);
+    u8g2.print("T: " + String(p_tData->compParams.currentTemperature, 3));
+    u8g2.setCursor(2, 61);
+    u8g2.print("P: " + String(p_tData->compParams.currentPressure, 6));
+    u8g2.sendBuffer();
+    delay(secDelay * 1000);
+  }
 }
 
 /*********************************************************************************
@@ -590,7 +837,7 @@ void vHalDisplay_drawMicsValues(uint16_t redval, uint16_t oxval, uint16_t nh3val
  * @param sysStatus System status structure
  * @param event Display event to show
  ******************************************************************************************/
-void updateDisplayStatus(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus, displayEvents_t event)
+void updateDisplayStatus(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus, displayEvents_t event, systemData_t *sysData)
 {
   if ((!devInfo) || (!sysStatus))
   {
@@ -604,6 +851,11 @@ void updateDisplayStatus(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
   vMspOs_takeDataAccessMutex();
   localDisplayData.devInfo = *devInfo;
   localDisplayData.sysStat = *sysStatus;
+  if (sysData)
+  {
+    localDisplayData.sysData = *sysData;
+    localDisplayData.hasSysData = true;
+  }
   vMspOs_giveDataAccessMutex();
 
   tTaskDisplay_sendEvent(&localDisplayData);
@@ -628,6 +880,8 @@ void vMsp_updateDataAndSendEvent(displayEvents_t event,
 {
   displayData_t localDisplayData = {};
   localDisplayData.currentEvent = event;
+  localDisplayData.hasSensorData = true;
+  localDisplayData.hasSysData = true;
 
   vMspOs_takeDataAccessMutex();
 
@@ -640,6 +894,28 @@ void vMsp_updateDataAndSendEvent(displayEvents_t event,
   vMspOs_giveDataAccessMutex();
 
   tTaskDisplay_sendEvent(&localDisplayData);
+}
+
+/*********************************************************************************
+ * @brief draws the current date and time on the U8G2 display
+ *
+ * @param p_tSysData system data structure containing Date and Time strings
+ * @param statPtr    system status structure
+ * @param devinfoPtr device network info structure
+ * @param secdelay   seconds to show the screen
+ *********************************************************************************/
+void vHalDisplay_drawDateTime(systemData_t *p_tSysData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+{
+  short offsetDate = sHalDisplay_getLineHOffset(p_tSysData->Date);
+  short offsetTime = sHalDisplay_getLineHOffset(p_tSysData->Time);
+
+  vHal_displayDrawScrHead(statPtr, devinfoPtr);
+  u8g2.setCursor(offsetDate, DRAW_TWO_LINE_Y_OFFSET_L1);
+  u8g2.print(p_tSysData->Date);
+  u8g2.setCursor(offsetTime, DRAW_TWO_LINE_Y_OFFSET_L2);
+  u8g2.print(p_tSysData->Time);
+  u8g2.sendBuffer();
+  delay(secdelay * 1000);
 }
 
 //************************************** EOF **************************************

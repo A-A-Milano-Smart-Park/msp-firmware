@@ -23,6 +23,12 @@
 
 // ===== Debug Configuration =====
 
+// FOTA Control
+// When defined, the device never checks online for newer firmware and always
+// skips the FOTA process, regardless of the fw_auto_upgrade config value.
+// Leave commented to keep the normal nightly firmware-update check.
+#define SKIP_FIRMWARE_UPDATE
+
 // Configuration Download Control
 // When set to 1, device skips configuration download from server response
 // and works only with local config_v4.json file
@@ -42,6 +48,13 @@
 
 // #define ENABLE_I2C_SCANNER                 // enable to scan I2C devices at startup
 
+// MSP1 Debug Display
+// When defined, the display stops cycling through the normal measurement
+// screens and instead shows only the MSP1 quantities: the NAU7802 ADC
+// readings (sensor channel and heater channel) and the MCP4725 DAC setpoint.
+// Intended for bench debugging of the MICS-2714 front-end and heater loop.
+// #define MSP1_DEBUG_ENABLE
+
 // ===== Security Configuration =====
 
 // Enhanced Security Features (disabled by default - enable for production)
@@ -59,6 +72,10 @@
 // Enable this flag for production deployments requiring cryptographic verification
 #define SKIP_FIRMWARE_VERSION_CHECK 0
 #define FORCE_GSM_NETWORK_CONNECTION 0
+
+// API_SERVER and API_SECRET_SALT are injected at build time
+// (see Makefile: make build API_SERVER=... API_SECRET_SALT=...).
+// Never hardcode the production values here: this repository is public.
 
 // API Server Configuration
 #ifndef API_SERVER
@@ -114,11 +131,23 @@
 #define JSON_KEY_TIMEZONE "timezone"
 #define JSON_KEY_FW_AUTO_UPGRADE "fw_auto_upgrade"
 #define JSON_KEY_GAS_SENSOR_TYPE "gas_sensor_type"
+#define JSON_KEY_MSP1_PARAMS "msp1_params"
 
 // MICS Calibration Sub-keys
 #define JSON_KEY_MICS_RED "RED"
 #define JSON_KEY_MICS_OX "OX"
 #define JSON_KEY_MICS_NH3 "NH3"
+
+// MSP1 Heater Params Sub-keys
+#define JSON_KEY_MSP1_R0_NO2_OHM "r0_no2_ohm"
+#define JSON_KEY_MSP1_RHEAT_TEMP_MAX_C "rheat_temp_max_c"
+#define JSON_KEY_MSP1_RHEAT_TAMB_OHM "rheat_tamb_ohm"
+#define JSON_KEY_MSP1_RHEAT_TAMB_REF_C "rheat_tamb_ref_c"
+#define JSON_KEY_MSP1_KR "kr"
+#define JSON_KEY_MSP1_LDO_INDEX "ldo_index"
+#define JSON_KEY_MSP1_AVDD_EXT_MV "avdd_ext_mv"
+#define JSON_KEY_MSP1_DAC_VDD_MV "dac_vdd_mv"
+#define JSON_KEY_MSP1_RAMP_STEP_DELAY_MS "ramp_step_delay_ms"
 
 // Compensation Factor Sub-keys
 #define JSON_KEY_COMP_H "compH"
@@ -151,7 +180,7 @@
 // ===== Version Information =====
 
 #ifndef VERSION_STRING
-#define VERSION_STRING "4.1.6"
+#define VERSION_STRING "4.1.7"
 #endif
 
 #endif // CONFIG_H

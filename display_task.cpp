@@ -17,6 +17,7 @@
 #include "freertos/event_groups.h"
 #include "display_task.h"
 #include "display.h"
+#include "time.h"
 
 //--------------------------------------------------------------------------------------------------
 //------------------ DISPLAY TASK SECTION ----------------------------------------------------------
@@ -24,7 +25,7 @@
 
 // -- defines --
 // Task configuration - public values defined in display_task.h
-#define DISP_QUEUE_LENGTH 10 // Internal queue configuration
+#define DISP_QUEUE_LENGTH 20 // Internal queue configuration
 #define DISP_QUEUE_ITEM_SIZE sizeof(displayData_t)
 #define DISP_QUEUE_SIZE (DISP_QUEUE_LENGTH * DISP_QUEUE_ITEM_SIZE)
 
@@ -41,9 +42,55 @@ state_machine_t dispFSM;
 
 // -- display data instance --
 static displayData_t data{};
+// Preserved in BSS (no stack cost).
+// updateDisplayStatus() only populates devInfo + sysStat; it zero-inits
+// sensorData, measStat and sysData. These statics carry the last values
+// supplied by vMsp_updateDataAndSendEvent so network-only events cannot
+// wipe them out.
+static sensorData_t       lastValidSensorData{};
+static deviceMeasurement_t lastValidMeasStat{};
+static systemData_t        lastValidSysData{};
 
-#define EVENT_WAIT_TIMEOUT 1000
+#define EVENT_WAIT_TIMEOUT 100 // short so GPIO0 pause/resume reacts quickly
 #define RESET_TIMEOUT 10
+
+// -- measurement page navigation (GPIO0 / boot button) --
+#define MEAS_PAGE_BUTTON_PIN 0
+#define MEAS_PAGE_DEBOUNCE_MS 200
+#define MEAS_PAGE_SCROLL_MS 3000 // auto-scroll dwell time per measurement page
+
+// measurement pages cycled by GPIO0; MSP1 slots skipped when sensor absent
+typedef enum
+{
+  MEAS_PAGE_BME680 = 0,
+  MEAS_PAGE_PMS5003,
+  MEAS_PAGE_MICSXX14,
+  MEAS_PAGE_OZONE,
+  MEAS_PAGE_MSP_INDEX,
+  MEAS_PAGE_MSP1_ADC_SENSOR,
+  MEAS_PAGE_MSP1_HEATER_DAC,
+  MEAS_PAGE_MSP1_RNO2,
+  MEAS_PAGE_FIRMWARE_VERSION,
+  MEAS_PAGE_DATETIME,
+  MEAS_PAGE_CONFIG_VALUES,
+  MEAS_PAGE_COUNT
+} measPage_t;
+
+// contiguous MSP1 page block, skipped as a whole when the sensor is absent
+#define MSP1_PAGE_SPAN (MEAS_PAGE_MSP1_RNO2 - MEAS_PAGE_MSP1_ADC_SENSOR + 1)
+
+static volatile uint32_t buttonPressCount = 0;
+
+static void IRAM_ATTR vMeasPageButtonIsr(void)
+{
+  static uint32_t lastPressTick = 0;
+  uint32_t nowTick = xTaskGetTickCountFromISR();
+  if ((nowTick - lastPressTick) >= pdMS_TO_TICKS(MEAS_PAGE_DEBOUNCE_MS))
+  {
+    lastPressTick = nowTick;
+    buttonPressCount++;
+  }
+}
 
 #define ONE_SEC_TIMEOUT 1
 #define TWO_SEC_TIMEOUT 2
@@ -103,8 +150,18 @@ void displayTask(void *pvParameters)
   dispFSM.return_state = DISP_EVENT_WAIT_FOR_EVENT;
   dispFSM.isFirstTransition = true;
 
-  TickType_t eventWaitTimeout = pdMS_TO_TICKS(EVENT_WAIT_TIMEOUT); // 1 second timeout for waiting events
+  TickType_t eventWaitTimeout = pdMS_TO_TICKS(EVENT_WAIT_TIMEOUT);
   displayEvents_t displayEvents = DISP_EVENT_WAIT_FOR_EVENT;
+
+  // GPIO0 (boot button) cycles the measurement pages
+  pinMode(MEAS_PAGE_BUTTON_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(MEAS_PAGE_BUTTON_PIN), vMeasPageButtonIsr, FALLING);
+
+  uint32_t lastButtonPressCount = 0;
+  uint8_t measPage = 0;
+  bool measPageDirty = true; // redraw only on page change, new data, or after another event
+  bool autoScroll = true;    // GPIO0 toggles: pause on current page / resume scrolling
+  TickType_t lastPageChangeTick = xTaskGetTickCount();
 
   while (1)
   {
@@ -114,8 +171,35 @@ void displayTask(void *pvParameters)
     {
       if (pdTRUE != tTaskDisplay_receiveEvent(&data, eventWaitTimeout))
       {
+        uint32_t presses = buttonPressCount;
+        if (presses != lastButtonPressCount)
+        {
+          lastButtonPressCount = presses;
+          // Consume without toggling until the first measurement page is up:
+          // attachInterrupt() on GPIO0 can latch a spurious FALLING edge at
+          // boot (ESP32 quirk), which paused the carousel before it was ever
+          // visible — it then looked like it needed a press to start. The
+          // button only pauses/resumes a carousel the user can actually see.
+          if (dispFSM.isFirstTransition == false)
+          {
+            autoScroll = !autoScroll; // GPIO0: pause on current page / resume scrolling
+            lastPageChangeTick = xTaskGetTickCount();
+          }
+        }
+        if (autoScroll && ((xTaskGetTickCount() - lastPageChangeTick) >= pdMS_TO_TICKS(MEAS_PAGE_SCROLL_MS)))
+        {
+#if defined(MSP1_DEBUG_ENABLE)
+          uint8_t numPages = MSP1_PAGE_SPAN; // debug mode: only the MSP1 pages
+#else
+          // MSP1 replaces the MICS page; without MSP1 its page block is hidden
+          uint8_t numPages = (data.sysStat.gasSensorType == GAS_SENSOR_MSP1) ? (MEAS_PAGE_COUNT - 1) : (MEAS_PAGE_COUNT - MSP1_PAGE_SPAN);
+#endif
+          measPage = (measPage + 1) % numPages;
+          lastPageChangeTick = xTaskGetTickCount();
+          measPageDirty = true;
+        }
         // check if we have received the first data
-        if (false == dispFSM.isFirstTransition)
+        if ((false == dispFSM.isFirstTransition) && measPageDirty)
         {
           dispFSM.next_state = DISP_EVENT_SHOW_MEAS_DATA;
         }
@@ -126,12 +210,41 @@ void displayTask(void *pvParameters)
       }
       else
       {
+        if (data.hasSensorData)
+        {
+          // Full event from vMsp_updateDataAndSendEvent — save both fields.
+          lastValidSensorData = data.sensorData;
+          lastValidMeasStat   = data.measStat;
+        }
+        else
+        {
+          // Network-only event (updateDisplayStatus) — restore the fields it
+          // does not populate so they are never overwritten with zeros.
+          data.sensorData = lastValidSensorData;
+          data.measStat   = lastValidMeasStat;
+        }
+
+        // sysData is tracked separately: updateDisplayStatus() takes an optional
+        // sysData and DISP_EVENT_DATETIME_OK passes the freshly NTP-synced
+        // Date/Time through it. Restoring it from lastValidSysData just because
+        // the event carried no sensor data threw that Date/Time away and drew
+        // the empty strings the display had at boot.
+        if (data.hasSysData)
+        {
+          lastValidSysData = data.sysData;
+        }
+        else
+        {
+          data.sysData = lastValidSysData;
+        }
+
         displayEvents = data.currentEvent;
         dispFSM.next_state = displayEvents;
         if (displayEvents == DISP_EVENT_SHOW_MEAS_DATA)
         {
           dispFSM.isFirstTransition = false;
         }
+        measPageDirty = true; // any event repaints the screen: restore meas page after it
       }
       break;
     }
@@ -250,6 +363,27 @@ void displayTask(void *pvParameters)
       dispFSM.next_state = dispFSM.return_state;
       break;
     }
+    case DISP_EVENT_MSP1_SENSOR_INIT:
+    {
+      vHalDisplay_drawTwoLines("Detecting MSP1...", "", ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
+      dispFSM.next_state = dispFSM.return_state;
+      break;
+    }
+    
+    case DISP_EVENT_MSP1_SENSOR_OKAY:
+    {
+      vHalDisplay_drawTwoLines("Detecting MSP1...", "MSP1 -> Ok!", ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
+      dispFSM.next_state = dispFSM.return_state;
+      break;
+    }
+
+      case DISP_EVENT_MSP1_SENSOR_ERR:
+    {
+      vHalDisplay_drawTwoLines("Detecting MSP1...", "MSP1 -> Err!", ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
+      dispFSM.next_state = dispFSM.return_state;
+      break;
+    }
+
     case DISP_EVENT_MICSxx14_SENSOR_OKAY:
     {
       vHalDisplay_drawTwoLines("Detecting MICSxx14...", "MICSxx14 -> Ok!", ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
@@ -380,7 +514,7 @@ void displayTask(void *pvParameters)
     }
     case DISP_EVENT_DATETIME_OK:
     {
-      vHalDisplay_drawTwoLines("Getting date&time...", "OK!", ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
+      vHalDisplay_drawTwoLines(data.sysData.Date, data.sysData.Time, ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
       dispFSM.next_state = dispFSM.return_state;
       break;
     }
@@ -454,13 +588,69 @@ void displayTask(void *pvParameters)
     // measurement data
     case DISP_EVENT_SHOW_MEAS_DATA:
     {
-      vHalDisplay_drawBme680GasSensorData(&data.sensorData, &data.sysStat, &data.devInfo, THREE_SEC_TIMEOUT);
-      vHalDisplay_drawPMS5003AirQualitySensorData(&data.sensorData, &data.sysStat, &data.devInfo, THREE_SEC_TIMEOUT);
-      vHalDisplay_drawMICSxx14PollutionSensorData(&data.sensorData, &data.sysStat, &data.devInfo, THREE_SEC_TIMEOUT);
-      vHalDisplay_drawOzoneSensorData(&data.sensorData, &data.sysStat, &data.devInfo, THREE_SEC_TIMEOUT);
-      vHalDisplay_drawMspIndexData(&data.sensorData, &data.sysStat, &data.devInfo, THREE_SEC_TIMEOUT);
-      vHalDisplay_drawFirmwareVersion(&data.sysStat, &data.devInfo, THREE_SEC_TIMEOUT);
-      vHalDisplay_drawConfigurationValues(&data.sensorData, &data.sysStat, &data.devInfo, &data.measStat, THREE_SEC_TIMEOUT);
+#if defined(MSP1_DEBUG_ENABLE)
+      // Debug mode: only the MSP1 pages, cycled by GPIO0.
+      measPage_t page = (measPage_t)(MEAS_PAGE_MSP1_ADC_SENSOR + measPage);
+#else
+      // Static page; zero delay keeps the screen fixed until next redraw.
+      measPage_t page = (measPage_t)measPage;
+      if (data.sysStat.gasSensorType == GAS_SENSOR_MSP1)
+      {
+        if (page >= MEAS_PAGE_MICSXX14)
+        {
+          page = (measPage_t)(page + 1); // skip the MICS page: MSP1 replaces it
+        }
+      }
+      else if (page >= MEAS_PAGE_MSP1_ADC_SENSOR)
+      {
+        page = (measPage_t)(page + MSP1_PAGE_SPAN); // skip the MSP1 page block
+      }
+      // Hard guard: MSP1 pages are shown only when gasSensorType == GAS_SENSOR_MSP1,
+      // regardless of how the page mapping above evolves.
+      if ((data.sysStat.gasSensorType != GAS_SENSOR_MSP1) &&
+          (page >= MEAS_PAGE_MSP1_ADC_SENSOR) && (page <= MEAS_PAGE_MSP1_RNO2))
+      {
+        page = (measPage_t)(MEAS_PAGE_MSP1_RNO2 + 1);
+      }
+#endif
+      switch (page)
+      {
+      case MEAS_PAGE_BME680:
+        vHalDisplay_drawBme680GasSensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_PMS5003:
+        vHalDisplay_drawPMS5003AirQualitySensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_MICSXX14:
+        vHalDisplay_drawMICSxx14PollutionSensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_OZONE:
+        vHalDisplay_drawOzoneSensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_MSP_INDEX:
+        vHalDisplay_drawMspIndexData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_MSP1_ADC_SENSOR:
+        vHalDisplay_drawMsp1AdcSensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_MSP1_HEATER_DAC:
+        vHalDisplay_drawMsp1HeaterDacData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_MSP1_RNO2:
+        vHalDisplay_drawMsp1Rno2Data(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_FIRMWARE_VERSION:
+        vHalDisplay_drawFirmwareVersion(&data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_DATETIME:
+        vHalDisplay_drawCurrentDateTime(&data.sysStat, &data.devInfo, 0);
+        break;
+      case MEAS_PAGE_CONFIG_VALUES:
+      default:
+        vHalDisplay_drawConfigurationValues(&data.sensorData, &data.sysStat, &data.devInfo, &data.measStat, 0);
+        break;
+      }
+      measPageDirty = false;
       dispFSM.next_state = dispFSM.return_state;
       break;
     }

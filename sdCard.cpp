@@ -24,6 +24,7 @@
 #include "mspOs.h"
 #include "config.h"
 #include "sensors.h"
+#include "msp1.h"
 
 #define FOLDER_NAME_LEN 16
 #define TIMEFORMAT_LEN 30
@@ -311,6 +312,11 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
 
   // Parse Average Measurements
   pDev->avg_measurements = config[JSON_KEY_AVERAGE_MEASUREMENTS] | 30;
+  if (pDev->avg_measurements < 1)
+  {
+    log_w("avg_measurements from config is %d (invalid) — clamping to 1", pDev->avg_measurements);
+    pDev->avg_measurements = 1;
+  }
   log_i("avgMeasure = *%d*", pDev->avg_measurements);
 
   // Parse Sea Level Altitude
@@ -397,6 +403,47 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
   }
   log_i("compensation[] = *%.3f*, *%.3f*, *%.6f*", p_tData->compParams.currentHumidity, p_tData->compParams.currentTemperature, p_tData->compParams.currentPressure);
 
+  // Parse MSP1 Heater Params
+  {
+    msp1Config_t msp1Cfg;
+
+    if (!config[JSON_KEY_MSP1_PARAMS].isNull())
+    {
+      JsonObject msp1Params = config[JSON_KEY_MSP1_PARAMS];
+      msp1Cfg.r0No2_ohm = msp1Params[JSON_KEY_MSP1_R0_NO2_OHM] | MSP1_NO2_R0_OHM;
+      msp1Cfg.rheatTempMaxC = msp1Params[JSON_KEY_MSP1_RHEAT_TEMP_MAX_C] | MSP1_HEATER_TEMP_MAX_DEFAULT_C;
+      msp1Cfg.rheatTambOhm = msp1Params[JSON_KEY_MSP1_RHEAT_TAMB_OHM] | MSP1_HEATER_TAMB_DEFAULT_OHM;
+      msp1Cfg.rheatTambRefC = msp1Params[JSON_KEY_MSP1_RHEAT_TAMB_REF_C] | MSP1_HEATER_TAMB_REF_C;
+      msp1Cfg.krOhmPerC = msp1Params[JSON_KEY_MSP1_KR] | MSP1_HEATER_KR_DEFAULT_OHM_PER_C;
+      msp1Cfg.ldoIndex = msp1Params[JSON_KEY_MSP1_LDO_INDEX] | MSP1_LDO_DEFAULT_INDEX;
+      msp1Cfg.avddExt_mV = msp1Params[JSON_KEY_MSP1_AVDD_EXT_MV] | MSP1_AVDD_EXT_DEFAULT_MV;
+      msp1Cfg.dacVdd_mV = msp1Params[JSON_KEY_MSP1_DAC_VDD_MV] | MSP1_DAC_VDD_DEFAULT_MV;
+      msp1Cfg.rampStepDelayMs = msp1Params[JSON_KEY_MSP1_RAMP_STEP_DELAY_MS] | MSP1_HEATER_RAMP_DELAY_DEFAULT_MS;
+    }
+    else
+    {
+      log_w("Missing MSP1_PARAMS in config. Using defaults");
+      msp1Cfg.r0No2_ohm = MSP1_NO2_R0_OHM;
+      msp1Cfg.rheatTempMaxC = MSP1_HEATER_TEMP_MAX_DEFAULT_C;
+      msp1Cfg.rheatTambOhm = MSP1_HEATER_TAMB_DEFAULT_OHM;
+      msp1Cfg.rheatTambRefC = MSP1_HEATER_TAMB_REF_C;
+      msp1Cfg.krOhmPerC = MSP1_HEATER_KR_DEFAULT_OHM_PER_C;
+      msp1Cfg.ldoIndex = MSP1_LDO_DEFAULT_INDEX;
+      msp1Cfg.avddExt_mV = MSP1_AVDD_EXT_DEFAULT_MV;
+      msp1Cfg.dacVdd_mV = MSP1_DAC_VDD_DEFAULT_MV;
+      msp1Cfg.rampStepDelayMs = MSP1_HEATER_RAMP_DELAY_DEFAULT_MS;
+    }
+
+    tMsp1_setConfig(&msp1Cfg);
+
+    /* Read back what was actually applied: tMsp1_setConfig() replaces an
+     * out-of-range Tamb reference (and LDO index) with the default. */
+    tMsp1_getConfig(&msp1Cfg);
+    log_i("msp1_params[] = R0=*%.0f* ohm, Tmax=*%.1f* C, Rtamb=*%.1f* ohm @ *%.1f* C, Kr=*%.4f* ohm/C, LDO_idx=*%u*, AVDDext=*%.0f* mV, DACvdd=*%.0f* mV, ramp_step=*%u* ms",
+          msp1Cfg.r0No2_ohm, msp1Cfg.rheatTempMaxC, msp1Cfg.rheatTambOhm, msp1Cfg.rheatTambRefC,
+          msp1Cfg.krOhmPerC, msp1Cfg.ldoIndex, msp1Cfg.avddExt_mV, msp1Cfg.dacVdd_mV, msp1Cfg.rampStepDelayMs);
+  }
+
 // Parse Use Modem
 #if (FORCE_GSM_NETWORK_CONNECTION == 1)
   sysStat->use_modem = true;
@@ -477,8 +524,7 @@ static uint8_t parseConfig(File fl, deviceNetworkInfo_t *p_tDev, sensorData_t *p
   // Parse Gas Sensor Type
   sysStat->gasSensorType = config[JSON_KEY_GAS_SENSOR_TYPE] | GAS_SENSOR_MICS6814; // Default to MICS6814
   log_i("gasSensorType = %d (%s)", sysStat->gasSensorType,
-        (sysStat->gasSensorType == GAS_SENSOR_MICS6814) ? "MICS6814" : (sysStat->gasSensorType == GAS_SENSOR_MICS4514) ? "MICS4514"
-                                                                                                                       : "Unknown");
+        pcGeneric_gasSensorName(sysStat->gasSensorType));
 
   return outcome;
 }
@@ -556,6 +602,13 @@ uint8_t checkConfig(const char *configpath, deviceNetworkInfo_t *p_tDev, sensorD
       compFactors[JSON_KEY_COMP_T] = p_tData->compParams.currentTemperature;
       compFactors[JSON_KEY_COMP_P] = p_tData->compParams.currentPressure;
 
+      // MSP1 heater params
+      JsonObject msp1Params = config[JSON_KEY_MSP1_PARAMS].to<JsonObject>();
+      msp1Params[JSON_KEY_MSP1_R0_NO2_OHM] = MSP1_NO2_R0_OHM;
+      msp1Params[JSON_KEY_MSP1_RHEAT_TEMP_MAX_C] = MSP1_HEATER_TEMP_MAX_DEFAULT_C;
+      msp1Params[JSON_KEY_MSP1_RHEAT_TAMB_OHM] = MSP1_HEATER_TAMB_DEFAULT_OHM;
+      msp1Params[JSON_KEY_MSP1_KR] = MSP1_HEATER_KR_DEFAULT_OHM_PER_C;
+
       config[JSON_KEY_USE_MODEM] = p_tSys->use_modem;
       config[JSON_KEY_MODEM_APN] = "";
       config[JSON_KEY_NTP_SERVER] = DEFAULT_NTP_SERVER;
@@ -568,6 +621,7 @@ uint8_t checkConfig(const char *configpath, deviceNetworkInfo_t *p_tDev, sensorD
       help[JSON_KEY_AVERAGE_MEASUREMENTS] = "Accepted values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60";
       help[JSON_KEY_SEA_LEVEL_ALTITUDE] = "Value in meters, must be changed according to device location. 122.0 meters is the average altitude in Milan, Italy";
       help[JSON_KEY_TIMEZONE] = "Standard tz timezone definition. More details at https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html";
+      help[JSON_KEY_MSP1_PARAMS] = "MSP1 (MICS-2714) heater/NO2 calibration. r0_no2_ohm: NO2 baseline resistance. rheat_temp_max_c: target heater operating temperature. rheat_tamb_ohm: heater resistance at the Tamb reference point. kr: heater resistance temperature coefficient (ohm/C).";
 
       // Serialize and write JSON to file
       serializeJsonPretty(doc, cfgfile);
@@ -712,6 +766,23 @@ bool bHalSdcard_writeConfig(deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, 
   compFactors[JSON_KEY_COMP_T] = p_tData->compParams.currentTemperature;
   compFactors[JSON_KEY_COMP_P] = p_tData->compParams.currentPressure;
 
+  // MSP1 heater params
+  {
+    msp1Config_t msp1Cfg;
+    tMsp1_getConfig(&msp1Cfg);
+
+    JsonObject msp1Params = config[JSON_KEY_MSP1_PARAMS].to<JsonObject>();
+    msp1Params[JSON_KEY_MSP1_R0_NO2_OHM] = msp1Cfg.r0No2_ohm;
+    msp1Params[JSON_KEY_MSP1_RHEAT_TEMP_MAX_C] = msp1Cfg.rheatTempMaxC;
+    msp1Params[JSON_KEY_MSP1_RHEAT_TAMB_OHM] = msp1Cfg.rheatTambOhm;
+    msp1Params[JSON_KEY_MSP1_RHEAT_TAMB_REF_C] = msp1Cfg.rheatTambRefC;
+    msp1Params[JSON_KEY_MSP1_KR] = msp1Cfg.krOhmPerC;
+    msp1Params[JSON_KEY_MSP1_LDO_INDEX] = msp1Cfg.ldoIndex;
+    msp1Params[JSON_KEY_MSP1_AVDD_EXT_MV] = msp1Cfg.avddExt_mV;
+    msp1Params[JSON_KEY_MSP1_DAC_VDD_MV] = msp1Cfg.dacVdd_mV;
+    msp1Params[JSON_KEY_MSP1_RAMP_STEP_DELAY_MS] = msp1Cfg.rampStepDelayMs;
+  }
+
   // Modem configuration
   config[JSON_KEY_USE_MODEM] = (p_tSys->use_modem != 0);
   config[JSON_KEY_MODEM_APN] = p_tDev->apn;
@@ -736,7 +807,16 @@ bool bHalSdcard_writeConfig(deviceNetworkInfo_t *p_tDev, sensorData_t *p_tData, 
     help[JSON_KEY_AVERAGE_MEASUREMENTS] = "Accepted values: 1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60";
     help[JSON_KEY_SEA_LEVEL_ALTITUDE] = "Value in meters, must be changed according to device location. 122.0 meters is the average altitude in Milan, Italy";
     help[JSON_KEY_TIMEZONE] = "Standard tz timezone definition. More details at https://www.gnu.org/software/libc/manual/html_node/TZ-Variable.html";
-    help[JSON_KEY_GAS_SENSOR_TYPE] = "Gas sensor type: 0 = MICS6814, 1 = MICS4514 (DFRobot SEN0377)";
+    // Built from pcGeneric_gasSensorName() so a new sensor type shows up here for free
+    String gasSensorHelp = "Gas sensor type:";
+    for (uint8_t i = 0; i < GAS_SENSOR_MAX; i++)
+    {
+      gasSensorHelp += (i ? ", " : " ") + String(i) + " = " + pcGeneric_gasSensorName(i);
+    }
+    help[JSON_KEY_GAS_SENSOR_TYPE] = gasSensorHelp;
+    help[JSON_KEY_MSP1_LDO_INDEX] = "MSP1 only: NAU7802 LDO/AVDD (ADC reference). 0=2.4V 1=2.7V 2=3.0V 3=3.3V 4=3.6V 5=3.9V 6=4.2V 7=4.5V 8=EXTERNAL (LDO off, AVDD supplied externally, value from avdd_ext_mv)";
+    help[JSON_KEY_MSP1_AVDD_EXT_MV] = "MSP1 only: externally supplied NAU7802 AVDD in mV, used as ADC reference ONLY when ldo_index=8 (EXTERNAL). Accepted range 2400-5500";
+    help[JSON_KEY_MSP1_DAC_VDD_MV] = "MSP1 only: MCP4725 DAC supply/reference VDD in mV, ALWAYS taken from this value. Accepted range 2700-5500";
   }
 
   // Write config to SD card
@@ -986,21 +1066,20 @@ bool bHalSdcard_updateFromServerConfig(const String &server_json, deviceNetworkI
     }
   }
 
-  // gas_sensor_type - 0 (MICS6814) or 1 (MICS4514)
+  // gas_sensor_type - any value of gas_sensor_type_t (see pcGeneric_gasSensorName)
   if (!server_doc["gas_sensor_type"].isNull())
   {
     uint8_t value = server_doc["gas_sensor_type"].as<uint8_t>();
-    if (value <= 1)
+    if (value < GAS_SENSOR_MAX)
     {
       p_tSys->gasSensorType = value;
-      log_i("Updated gas_sensor_type: %d (%s)", value,
-            (value == 0) ? "MICS6814" : "MICS4514");
+      log_i("Updated gas_sensor_type: %d (%s)", value, pcGeneric_gasSensorName(value));
       config_updated = true;
       fields_validated++;
     }
     else
     {
-      log_w("Rejected gas_sensor_type: %d (must be 0 or 1) - keeping current value: %d", value, p_tSys->gasSensorType);
+      log_w("Rejected gas_sensor_type: %d (must be < %d) - keeping current value: %d", value, GAS_SENSOR_MAX, p_tSys->gasSensorType);
       fields_rejected++;
     }
   }
@@ -1218,7 +1297,9 @@ void vHalSdcard_logToSD(send_data_t *data, systemData_t *p_tSysData, systemStatu
   }
   logvalue += FIRST_DATA_COLUMN_SEPARATOR;
   logvalue += FIRST_DATA_COLUMN_SEPARATOR; // for "radiation"
-  if ((p_tData->status.MICS6814Sensor) || (p_tData->status.MICS4514Sensor))
+  // MSP1 included: with GAS_SENSOR_MSP1 both MICS status flags are false, so
+  // the NO2 column (the Rno2/R0 ratio) was logged as empty on every row.
+  if ((p_tData->status.MICS6814Sensor) || (p_tData->status.MICS4514Sensor) || (p_tData->status.MSP1Sensor))
   {
     logvalue += vGeneric_floatToComma(data->MICS_NO2);
   }
