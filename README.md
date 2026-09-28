@@ -23,6 +23,10 @@ Libraries listed below can be installed through the Arduino IDE Library Manager:
 - [PMS Library](https://github.com/fu-hsi/pms) version 1.1.0
 - [TinyGSM Library](https://github.com/vshymanskyy/TinyGSM) version 0.11.7
 - [ArduinoJson] (https://arduinojson.org/?utm_source=meta&utm_medium=library.properties) version 7.4.2
+- [Adafruit NAU7802 Library](https://github.com/adafruit/Adafruit_NAU7802) version 1.0.8 (MSP1 NO2 front-end ADC)
+- [Adafruit MCP4725](https://github.com/adafruit/Adafruit_MCP4725) version 2.0.2 (MSP1 heater DAC)
+
+Both Adafruit libraries depend on [Adafruit BusIO](https://github.com/adafruit/Adafruit_BusIO), which the Library Manager offers to install automatically.
 
 You will also need to install a modified version of [MiCS6814-I2C-MOD-Library](https://github.com/eNBeWe/MiCS6814-I2C-Library/network) which is not available through the Arduino Library Manager and [must be imported manually](https://www.arduino.cc/en/Guide/Libraries#importing-a-zip-library):
 - [MiCS6814-I2C-MOD-Library](https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library)
