@@ -546,8 +546,8 @@ static bool bHalDisplay_drawMsp1Unavailable(sensorData_t *p_tData, systemStatus_
 }
 
 /************************************************************************************
- * @brief Draws the MSP1 NAU7802 ADC sensor channel (CH0) raw and averaged voltage.
- *        Part of the MSP1 page set (see also vHalDisplay_drawMsp1HeaterDacData and
+ * @brief Draws the MSP1 NAU7802 ADC page: averaged CH0 (sensor) and CH1 (V_R14)
+ *        voltages. Part of the MSP1 page set (see also vHalDisplay_drawMsp1HeaterDacData and
  *        vHalDisplay_drawMsp1Rno2Data) shown when GAS_SENSOR_MSP1 is configured or
  *        when MSP1_DEBUG_ENABLE is defined.
  *
@@ -558,7 +558,7 @@ static bool bHalDisplay_drawMsp1Unavailable(sensorData_t *p_tData, systemStatus_
  ************************************************************************************/
 void vHalDisplay_drawMsp1AdcSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
 {
-  if (bHalDisplay_drawMsp1Unavailable(p_tData, statPtr, devinfoPtr, "ADC Sensor (CH0)", secdelay))
+  if (bHalDisplay_drawMsp1Unavailable(p_tData, statPtr, devinfoPtr, "ADC", secdelay))
   {
     return;
   }
@@ -569,36 +569,46 @@ void vHalDisplay_drawMsp1AdcSensorData(sensorData_t *p_tData, systemStatus_t *st
   tMsp1_getDataCopy(&tMsp1Snapshot);
   const msp1Data_t *p_tMsp1 = &tMsp1Snapshot;
 
-  // Sliding-window averaged voltage for sensor channel CH0
+  // Sliding-window averaged voltages for CH0 (sensor) and CH1 (V_R14)
   // (window depth MSP1_DISPLAY_AVG_SAMPLES, refreshed at every sample).
+  float fAvgCh0_mV = 0.0f;
+  float fAvgCh1_mV = 0.0f;
+  bool bAvgReady = (tMsp1_getDisplayAverages(&fAvgCh0_mV, &fAvgCh1_mV, NULL) == STATUS_OK);
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
   u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
-  u8g2.print("ADC Sensor (CH0)");
+  u8g2.print("ADC");
   u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
-  u8g2.print("Avg: ");
+  u8g2.print("CH0: ");
   if (p_tMsp1->sensor.saturated)
   {
     u8g2.print(">1950 [SAT]");
   }
+  else if (bAvgReady)
+  {
+    u8g2.print(fAvgCh0_mV, 3);
+    u8g2.print(" mV");
+  }
   else
   {
-    float fAvg_mV = 0.0f;
-    if (tMsp1_getDisplayAverages(&fAvg_mV, NULL, NULL) == STATUS_OK)
-    {
-      u8g2.print(fAvg_mV, 1);
-      u8g2.print(" mV");
-    }
-    else
-    {
-      u8g2.print("n/a");
-    }
+    u8g2.print("n/a");
+  }
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L3);
+  u8g2.print("CH1: ");
+  if (bAvgReady)
+  {
+    u8g2.print(fAvgCh1_mV, 3);
+    u8g2.print(" mV");
+  }
+  else
+  {
+    u8g2.print("n/a");
   }
   u8g2.sendBuffer();
   delay(secdelay * 1000);
 }
 
 /************************************************************************************
- * @brief Draws the MSP1 heater channel CH1 readings and MCP4725 DAC setpoint.
+ * @brief Draws the MSP1 heater current, resistance and MCP4725 DAC output voltage.
  *
  * @param statPtr
  * @param devinfoPtr
@@ -615,7 +625,8 @@ void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *st
   tMsp1_getDataCopy(&tMsp1Snapshot);
   const msp1Data_t *p_tMsp1 = &tMsp1Snapshot;
 
-  // Ring-buffer averaged V_R14/current for heater channel CH1 and MCP4725 DAC setpoint
+  // Ring-buffer averaged heater current (from CH1), last measured R_heat
+  // (V_heat / I, 0 when no current flows) and MCP4725 output voltage
   msp1Config_t tMsp1Cfg;
   tMsp1_getConfig(&tMsp1Cfg);
   const float fVdac_mV = ((float)p_tMsp1->heater.dacSetpoint / (float)MSP1_DAC_STEPS) * tMsp1Cfg.dacVdd_mV;
@@ -623,14 +634,11 @@ void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *st
   u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
   u8g2.print("Heater (CH1)/DAC");
   u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
-  float fAvgVr14_mV = 0.0f;
   float fAvgI_mA = 0.0f;
-  u8g2.print("Avg: ");
-  if (tMsp1_getDisplayAverages(NULL, &fAvgVr14_mV, &fAvgI_mA) == STATUS_OK)
+  u8g2.print("I: ");
+  if (tMsp1_getDisplayAverages(NULL, NULL, &fAvgI_mA) == STATUS_OK)
   {
-    u8g2.print(fAvgVr14_mV, 1);
-    u8g2.print("mV I:");
-    u8g2.print(fAvgI_mA, 1);
+    u8g2.print(fAvgI_mA, 3);
     u8g2.print(" mA");
   }
   else
@@ -638,12 +646,20 @@ void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *st
     u8g2.print("n/a");
   }
   u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L3);
+  u8g2.print("R: ");
+  if (p_tMsp1->heater.rHeat_ohm > 0.0f)
+  {
+    u8g2.print(p_tMsp1->heater.rHeat_ohm, 2);
+    u8g2.print(" Ohm");
+  }
+  else
+  {
+    u8g2.print("n/a");
+  }
+  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L4);
   u8g2.print("VDAC: ");
   u8g2.print(fVdac_mV, 1);
   u8g2.print(" mV");
-  u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L4);
-  u8g2.print("DAC: ");
-  u8g2.print(p_tMsp1->heater.dacSetpoint);
   u8g2.sendBuffer();
   delay(secdelay * 1000);
 }
@@ -665,8 +681,8 @@ void vHalDisplay_drawMsp1Rno2Data(sensorData_t *p_tData, systemStatus_t *statPtr
   // Live preview, not no2.rno2_ohm: that field is only finalised once per
   // transmission window (SYS_STATE_SEND_DATA). The ring average is the same
   // sliding window (MSP1_DISPLAY_AVG_SAMPLES) used for the transmitted
-  // per-measurement Rno2/R0 in SYS_STATE_READ_SENSORS, and for the "Avg" line
-  // on the ADC sensor page — one filter, one step response.
+  // per-measurement Rno2/R0 in SYS_STATE_READ_SENSORS, and for the CH0 line
+  // on the ADC page — one filter, one step response.
   msp1Config_t tMsp1Cfg = {};
   tMsp1_getConfig(&tMsp1Cfg);
   float fLiveRno2_ohm = 0.0f;
