@@ -18,6 +18,7 @@
 #include "display_task.h"
 #include "display.h"
 #include "time.h"
+#include <type_traits>
 
 //--------------------------------------------------------------------------------------------------
 //------------------ DISPLAY TASK SECTION ----------------------------------------------------------
@@ -40,6 +41,11 @@ static QueueHandle_t displayTaskQueue; /*!< DISPLAY Task Events queue */
 // -- finite state machine --
 state_machine_t dispFSM;
 
+// xQueueSend/xQueueReceive copy items byte by byte: anything with an owning
+// pointer (String) would arrive dangling.
+static_assert(std::is_trivially_copyable<displayData_t>::value,
+              "displayData_t travels through a FreeRTOS queue: keep it free of String and other owning types");
+
 // -- display data instance --
 static displayData_t data{};
 // Preserved in BSS (no stack cost).
@@ -49,7 +55,7 @@ static displayData_t data{};
 // wipe them out.
 static sensorData_t       lastValidSensorData{};
 static deviceMeasurement_t lastValidMeasStat{};
-static systemData_t        lastValidSysData{};
+static dispSysData_t       lastValidSysData{};
 
 #define EVENT_WAIT_TIMEOUT 100 // short so GPIO0 pause/resume reacts quickly
 #define RESET_TIMEOUT 10
@@ -251,7 +257,7 @@ void displayTask(void *pvParameters)
     // set up cases
     case DISP_EVENT_DEVICE_BOOT:
     {
-      vHalDisplay_DrawBoot(&data.sysData.ver, FIVE_SEC_TIMEOUT);
+      vHalDisplay_DrawBoot(data.sysData.ver, FIVE_SEC_TIMEOUT);
       dispFSM.next_state = dispFSM.return_state;
       break;
     }
@@ -520,7 +526,7 @@ void displayTask(void *pvParameters)
     }
     case DISP_EVENT_DATETIME:
     {
-      vHalDisplay_drawTwoLines("Date & Time:", data.sysData.currentDataTime.c_str(), ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
+      vHalDisplay_drawTwoLines("Date & Time:", data.sysData.currentDataTime, ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
       dispFSM.next_state = dispFSM.return_state;
       break;
     }
@@ -543,7 +549,7 @@ void displayTask(void *pvParameters)
     }
     case DISP_EVENT_SSID_NOT_FOUND:
     {
-      vHalDisplay_drawLine(data.devInfo.noNet.c_str(), ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
+      vHalDisplay_drawLine(data.devInfo.noNet, ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
       dispFSM.next_state = dispFSM.return_state;
       break;
     }
@@ -555,7 +561,7 @@ void displayTask(void *pvParameters)
     }
     case DISP_EVENT_CONN_RETRY:
     {
-      vHalDisplay_drawTwoLines("Retrying...", data.devInfo.remain.c_str(), ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
+      vHalDisplay_drawTwoLines("Retrying...", data.devInfo.remain, ONE_SEC_TIMEOUT, &data.sysStat, &data.devInfo);
       dispFSM.next_state = dispFSM.return_state;
       break;
     }
@@ -613,22 +619,37 @@ void displayTask(void *pvParameters)
         page = (measPage_t)(MEAS_PAGE_MSP1_RNO2 + 1);
       }
 #endif
+      // Until the first SYS_STATE_READ_SENSORS completes, sensorData carries
+      // the boot zeros, not readings: the carousel starts on the first
+      // WAIT_FOR_TIMEOUT pass, before the first measurement. Clearing status
+      // draws every sensor-value page as "--" instead of 0. The MSP1 pages
+      // read live values from the MSP1 module and have their own "n/a".
+      sensorData_t *p_tSensor = &data.sensorData;
+      sensorData_t tNoData;
+      if (!data.measStat.isSensorDataAvailable)
+      {
+        tNoData = data.sensorData;
+        tNoData.status = {};
+        tNoData.fault = {};
+        tNoData.MSP = 0;
+        p_tSensor = &tNoData;
+      }
       switch (page)
       {
       case MEAS_PAGE_BME680:
-        vHalDisplay_drawBme680GasSensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        vHalDisplay_drawBme680GasSensorData(p_tSensor, &data.sysStat, &data.devInfo, 0);
         break;
       case MEAS_PAGE_PMS5003:
-        vHalDisplay_drawPMS5003AirQualitySensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        vHalDisplay_drawPMS5003AirQualitySensorData(p_tSensor, &data.sysStat, &data.devInfo, 0);
         break;
       case MEAS_PAGE_MICSXX14:
-        vHalDisplay_drawMICSxx14PollutionSensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        vHalDisplay_drawMICSxx14PollutionSensorData(p_tSensor, &data.sysStat, &data.devInfo, 0);
         break;
       case MEAS_PAGE_OZONE:
-        vHalDisplay_drawOzoneSensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        vHalDisplay_drawOzoneSensorData(p_tSensor, &data.sysStat, &data.devInfo, 0);
         break;
       case MEAS_PAGE_MSP_INDEX:
-        vHalDisplay_drawMspIndexData(&data.sensorData, &data.sysStat, &data.devInfo, 0);
+        vHalDisplay_drawMspIndexData(p_tSensor, &data.sysStat, &data.devInfo, 0);
         break;
       case MEAS_PAGE_MSP1_ADC_SENSOR:
         vHalDisplay_drawMsp1AdcSensorData(&data.sensorData, &data.sysStat, &data.devInfo, 0);

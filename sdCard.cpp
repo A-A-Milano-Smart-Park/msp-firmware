@@ -84,15 +84,7 @@ uint8_t addToLog(const char *path, const char *oldpath, const char *errpath, Str
  **********************************************************************/
 static void vMsp_sendNetworkDataToDisplay(deviceNetworkInfo_t *p_tDev, systemStatus_t *p_tSys, displayEvents_t event)
 {
-  displayData_t localDisplayData = {};
-  localDisplayData.currentEvent = event;
-
-  vMspOs_takeDataAccessMutex();
-  localDisplayData.devInfo = *p_tDev;
-  localDisplayData.sysStat = *p_tSys;
-  vMspOs_giveDataAccessMutex();
-
-  tTaskDisplay_sendEvent(&localDisplayData);
+  updateDisplayStatus(p_tDev, p_tSys, event);
 }
 
 /**********************************************************************

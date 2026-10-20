@@ -94,14 +94,36 @@ typedef enum _DISPLAY_EVENTS_
 
 } displayEvents_t;
 
+#define DISP_TEXT_LEN 32 /*!< Display text field size; a 128 px line holds ~21 chars */
+
+// -- display-side text --
+// The fields of deviceNetworkInfo_t / systemData_t the screens use, as plain
+// char arrays. The queue copies items byte by byte (xQueueSend), so a String
+// would travel as a raw pointer to a buffer its sender frees on return.
+typedef struct _DISP_DEV_INFO_
+{
+  char deviceid[DISP_TEXT_LEN]; /*!< Device identifier (screen header) */
+  char baseMacChr[18];          /*!< Device base MAC address string */
+  char remain[DISP_TEXT_LEN];   /*!< Remaining connection retries message */
+  char noNet[DISP_TEXT_LEN];    /*!< Network-not-found message */
+} dispDevInfo_t;
+
+typedef struct _DISP_SYS_DATA_
+{
+  char ver[DISP_TEXT_LEN];                   /*!< Firmware version string */
+  char Date[DATE_LEN];                       /*!< Current date string */
+  char Time[TIME_LEN];                       /*!< Current time string */
+  char currentDataTime[DATE_LEN + TIME_LEN]; /*!< "Date Time" display string */
+} dispSysData_t;
+
 // -- display task queue data
 typedef struct _DISP_TASK_DATA_
 {
   displayEvents_t currentEvent; /*!< Current event to be displayed */
   sensorData_t sensorData;      /*!< Sensor data to be displayed */
   systemStatus_t sysStat;       /*!< System status to be displayed */
-  deviceNetworkInfo_t devInfo;  /*!< Device network information to be displayed */
-  systemData_t sysData;         /*!< System data to be displayed */
+  dispDevInfo_t devInfo;        /*!< Device network information to be displayed */
+  dispSysData_t sysData;        /*!< System data to be displayed */
   deviceMeasurement_t measStat; /*!< Device measurement status to be displayed */
   uint8_t hasSensorData;           /*!< True when sensorData carries valid readings; display task preserves existing sensorData when false */
   uint8_t hasSysData;              /*!< True when sysData carries valid contents; display task preserves existing sysData when false */

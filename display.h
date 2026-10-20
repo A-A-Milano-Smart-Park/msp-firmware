@@ -32,7 +32,7 @@ void vHalDisplay_initSerialAndI2c(void);
  * 
  * @param fwver 
  *****************************************************/
-void vHalDisplay_DrawBoot(String *fwver, const uint8_t screenDelay);
+void vHalDisplay_DrawBoot(const char *fwver, const uint8_t screenDelay);
 
 /*******************************************************
 * @brief draws a text line on the U8G2 display
@@ -42,7 +42,7 @@ void vHalDisplay_DrawBoot(String *fwver, const uint8_t screenDelay);
 * @param statPtr 
 * @param devinfoPtr 
 *******************************************************/
-void vHalDisplay_drawLine(const char message[], short secdelay,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr);
+void vHalDisplay_drawLine(const char message[], short secdelay,systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr);
 
 
 /********************************************************
@@ -54,7 +54,7 @@ void vHalDisplay_drawLine(const char message[], short secdelay,systemStatus_t *s
  * @param statPtr 
  * @param devinfoPtr 
  ********************************************************/
-void vHalDisplay_drawTwoLines(const char message1[], const char message2[], short secdelay, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr);
+void vHalDisplay_drawTwoLines(const char message1[], const char message2[], short secdelay, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr);
 
 /*******************************************************
  * @brief draws a countdown on the U8G2 display
@@ -64,7 +64,7 @@ void vHalDisplay_drawTwoLines(const char message1[], const char message2[], shor
  * @param statPtr 
  * @param devinfoPtr 
  *******************************************************/
-void vHalDisplay_drawCountdown(short startsec, const char message[],systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr);
+void vHalDisplay_drawCountdown(short startsec, const char message[],systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr);
 
 /*********************************************************************************
  * @brief function to draw the MICS6814 sensor values on the display.
@@ -75,7 +75,7 @@ void vHalDisplay_drawCountdown(short startsec, const char message[],systemStatus
  * @param statPtr 
  * @param devinfoPtr 
  *********************************************************************************/
-void vHalDisplay_drawMicsValues(uint16_t redval, uint16_t oxval, uint16_t nh3val,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr);
+void vHalDisplay_drawMicsValues(uint16_t redval, uint16_t oxval, uint16_t nh3val,systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr);
 
 /*********************************************************************************
  * @brief function to draw the firmware version on the display.
@@ -83,7 +83,7 @@ void vHalDisplay_drawMicsValues(uint16_t redval, uint16_t oxval, uint16_t nh3val
  * @param statPtr
  * @param devinfoPtr
  *********************************************************************************/
-void vHalDisplay_drawFirmwareVersion(systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, const uint8_t secDelay);
+void vHalDisplay_drawFirmwareVersion(systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, const uint8_t secDelay);
 
 /*********************************************************************************
  * @brief function to draw the configuration values from SD card on the display.
@@ -94,7 +94,7 @@ void vHalDisplay_drawFirmwareVersion(systemStatus_t *statPtr, deviceNetworkInfo_
  * @param measPtr
  * @param secDelay
  *********************************************************************************/
-void vHalDisplay_drawConfigurationValues(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, deviceMeasurement_t *measPtr, const uint8_t secDelay);
+void vHalDisplay_drawConfigurationValues(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, deviceMeasurement_t *measPtr, const uint8_t secDelay);
 
 /*********************************************************************************
  * @brief function to draw the BME680 gas sensor data on the display.
@@ -103,7 +103,7 @@ void vHalDisplay_drawConfigurationValues(sensorData_t *p_tData, systemStatus_t *
  * @param statPtr 
  * @param devinfoPtr 
  ********************************************************************************/
-void vHalDisplay_drawBme680GasSensorData(sensorData_t *p_tData,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawBme680GasSensorData(sensorData_t *p_tData,systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
 
 /*********************************************************************************
  * @brief function to draw the PMS5003 air quality sensor data on the display.
@@ -112,7 +112,7 @@ void vHalDisplay_drawBme680GasSensorData(sensorData_t *p_tData,systemStatus_t *s
  * @param statPtr 
  * @param devinfoPtr 
  *********************************************************************************/
-void vHalDisplay_drawPMS5003AirQualitySensorData(sensorData_t *p_tData,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawPMS5003AirQualitySensorData(sensorData_t *p_tData,systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
 
 /*******************************************************************************************
  * @brief function to draw the MICS6814 pollution sensor data on the display.
@@ -121,7 +121,7 @@ void vHalDisplay_drawPMS5003AirQualitySensorData(sensorData_t *p_tData,systemSta
  * @param statPtr 
  * @param devinfoPtr 
  ******************************************************************************************/
-void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData,systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
 
 /******************************************************************************************
  * @brief function to draw the Ozone sensor data on the display.
@@ -130,7 +130,7 @@ void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData,systemSta
  * @param statPtr 
  * @param devinfoPtr 
  *****************************************************************************************/
-void vHalDisplay_drawOzoneSensorData(sensorData_t *p_tData,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawOzoneSensorData(sensorData_t *p_tData,systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
 
 /******************************************************************************************
  * @brief draws the MSP index data on the display.
@@ -140,7 +140,7 @@ void vHalDisplay_drawOzoneSensorData(sensorData_t *p_tData,systemStatus_t *statP
  * @param devinfoPtr 
  * @param secdelay 
  ******************************************************************************************/
-void vHalDisplay_drawMspIndexData(sensorData_t *p_tData,systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawMspIndexData(sensorData_t *p_tData,systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
 
 /******************************************************************************************
  * @brief draws the current date/time on the display, read fresh from the system clock.
@@ -149,7 +149,7 @@ void vHalDisplay_drawMspIndexData(sensorData_t *p_tData,systemStatus_t *statPtr,
  * @param devinfoPtr
  * @param secdelay
  ******************************************************************************************/
-void vHalDisplay_drawCurrentDateTime(systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawCurrentDateTime(systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
 
 /******************************************************************************************
  * @brief MSP1 pages (shown when GAS_SENSOR_MSP1 is selected, or exclusively when
@@ -162,9 +162,9 @@ void vHalDisplay_drawCurrentDateTime(systemStatus_t *statPtr, deviceNetworkInfo_
  * @param devinfoPtr
  * @param secdelay   seconds the screen stays on the display
  ******************************************************************************************/
-void vHalDisplay_drawMsp1AdcSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
-void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
-void vHalDisplay_drawMsp1Rno2Data(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawMsp1AdcSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawMsp1Rno2Data(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
 
 /******************************************************************************************
  * @brief Update display status with network events
@@ -184,7 +184,7 @@ void updateDisplayStatus(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
  * @param devinfoPtr device network info structure
  * @param secdelay   seconds to show the screen
  ******************************************************************************************/
-void vHalDisplay_drawDateTime(systemData_t *p_tSysData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay);
+void vHalDisplay_drawDateTime(systemData_t *p_tSysData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay);
 
 /******************************************************************************************
  * @brief Updates display data and sends event to display task queue

@@ -95,7 +95,7 @@
 static U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, I2C_SCL_PIN, I2C_SDA_PIN); // ESP32 Thing, HW I2C with pin remapping
 
 // -------------------------------local function prototype -------------------------------
-static void vHal_displayDrawScrHead(systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr);
+static void vHal_displayDrawScrHead(systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr);
 static short sHalDisplay_getLineHOffset(const char string[]);
 
 // ------------------------------- functions declerations---------------------------------
@@ -119,7 +119,7 @@ void vHalDisplay_initSerialAndI2c(void)
  *
  * @param fwver
  *****************************************************/
-void vHalDisplay_DrawBoot(String *fwver, const uint8_t screenDelay)
+void vHalDisplay_DrawBoot(const char *fwver, const uint8_t screenDelay)
 {
   u8g2.firstPage();
   u8g2.clearBuffer();
@@ -132,7 +132,7 @@ void vHalDisplay_DrawBoot(String *fwver, const uint8_t screenDelay)
   u8g2.setCursor(SET_CRSR_X_POS_AUTHOR, SET_CRSR_Y_POS_AUTHOR);
   u8g2.print(STR_AUTHOR);
   u8g2.setCursor(SET_CRSR_X_POS_FWVER, SET_CRSR_Y_POS_FWVER);
-  u8g2.print(*fwver);
+  u8g2.print(fwver);
   u8g2.sendBuffer();
   delay(screenDelay * 1000);
 }
@@ -143,14 +143,16 @@ void vHalDisplay_DrawBoot(String *fwver, const uint8_t screenDelay)
  * @param statPtr
  * @param devinfoPtr
  **********************************************************************/
-static void vHal_displayDrawScrHead(systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr)
+static void vHal_displayDrawScrHead(systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr)
 {
   u8g2.clearBuffer();
   u8g2.setFont(u8g2_font_6x13_tf);
 
   // system state
   u8g2.setCursor(POS_X_DEVICE_ID, POS_Y_DEVICE_ID);
-  u8g2.print("#" + devinfoPtr->deviceid + "#");
+  u8g2.print("#");
+  u8g2.print(devinfoPtr->deviceid);
+  u8g2.print("#");
 
   if (statPtr->sdCard)
   {
@@ -204,7 +206,7 @@ static short sHalDisplay_getLineHOffset(const char string[])
  * @param statPtr
  * @param devinfoPtr
  *******************************************************/
-void vHalDisplay_drawLine(const char message[], short secdelay, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr)
+void vHalDisplay_drawLine(const char message[], short secdelay, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr)
 {
   short offset = sHalDisplay_getLineHOffset(message);
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
@@ -223,7 +225,7 @@ void vHalDisplay_drawLine(const char message[], short secdelay, systemStatus_t *
  * @param statPtr
  * @param devinfoPtr
  ********************************************************/
-void vHalDisplay_drawTwoLines(const char message1[], const char message2[], short secdelay, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr)
+void vHalDisplay_drawTwoLines(const char message1[], const char message2[], short secdelay, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr)
 {
   short offset1 = sHalDisplay_getLineHOffset(message1);
   short offset2 = sHalDisplay_getLineHOffset(message2);
@@ -245,7 +247,7 @@ void vHalDisplay_drawTwoLines(const char message1[], const char message2[], shor
  * @param statPtr
  * @param devinfoPtr
  *******************************************************/
-void vHalDisplay_drawCountdown(short startsec, const char message[], systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr)
+void vHalDisplay_drawCountdown(short startsec, const char message[], systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr)
 {
   for (short i = startsec; i >= 0; i--)
   {
@@ -264,7 +266,7 @@ void vHalDisplay_drawCountdown(short startsec, const char message[], systemStatu
  * @param statPtr
  * @param devinfoPtr
  ********************************************************************************/
-void vHalDisplay_drawBme680GasSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawBme680GasSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   // log_d("Printing BME680Sensor data on display...");
   char sensorStringData[SENSOR_DATA_STR_FMT_LEN] = {0};
@@ -330,7 +332,7 @@ void vHalDisplay_drawBme680GasSensorData(sensorData_t *p_tData, systemStatus_t *
  * @param statPtr
  * @param devinfoPtr
  *********************************************************************************/
-void vHalDisplay_drawPMS5003AirQualitySensorData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawPMS5003AirQualitySensorData(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   // log_d("Printing PMS5003Sensor data on display...");
   char sensorStringData[SENSOR_DATA_STR_FMT_LEN] = {0};
@@ -383,7 +385,7 @@ void vHalDisplay_drawPMS5003AirQualitySensorData(sensorData_t *p_tData, systemSt
  * @param statPtr
  * @param devinfoPtr
  ******************************************************************************************/
-void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   // log_d("Printing MICS6814Sensor data on display...");
   char sensorStringData[SENSOR_DATA_STR_FMT_LEN] = {0};
@@ -437,7 +439,7 @@ void vHalDisplay_drawMICSxx14PollutionSensorData(sensorData_t *p_tData, systemSt
  * @param statPtr
  * @param devinfoPtr
  *****************************************************************************************/
-void vHalDisplay_drawOzoneSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawOzoneSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   // log_d("Printing OzoneSensor data on display...");
   char sensorStringData[SENSOR_DATA_STR_FMT_LEN] = {0};
@@ -471,17 +473,26 @@ void vHalDisplay_drawOzoneSensorData(sensorData_t *p_tData, systemStatus_t *stat
  * @param devinfoPtr
  * @param secdelay
  ************************************************************************************/
-void vHalDisplay_drawMspIndexData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawMspIndexData(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   // log_d("Printing OzoneSensor data on display...");
   char sensorStringData[SENSOR_DATA_STR_FMT_LEN] = {0};
 
   // page 4
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
-  vGeneric_dspFloatToComma(p_tData->MSP, sensorStringData, sizeof(sensorStringData));
   u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L2);
   u8g2.print("MSP:  ");
-  u8g2.print(sensorStringData);
+  // 0 = n.d. (no contributing sensor), -1 = not evaluated: "--" like the
+  // other sensor pages, never a number.
+  if (p_tData->MSP > 0)
+  {
+    vGeneric_dspFloatToComma(p_tData->MSP, sensorStringData, sizeof(sensorStringData));
+    u8g2.print(sensorStringData);
+  }
+  else
+  {
+    u8g2.print("--");
+  }
   u8g2.sendBuffer();
   delay(secdelay * 1000);
 }
@@ -495,7 +506,7 @@ void vHalDisplay_drawMspIndexData(sensorData_t *p_tData, systemStatus_t *statPtr
  * @param devinfoPtr
  * @param secdelay
  ************************************************************************************/
-void vHalDisplay_drawCurrentDateTime(systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawCurrentDateTime(systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   struct tm timeinfo;
   char dateStr[DATE_LEN] = {0};
@@ -527,7 +538,7 @@ void vHalDisplay_drawCurrentDateTime(systemStatus_t *statPtr, deviceNetworkInfo_
  *         healthy and the caller should draw its own values.
  ************************************************************************************/
 static bool bHalDisplay_drawMsp1Unavailable(sensorData_t *p_tData, systemStatus_t *statPtr,
-                                            deviceNetworkInfo_t *devinfoPtr, const char *title,
+                                            dispDevInfo_t *devinfoPtr, const char *title,
                                             short secdelay)
 {
   if (p_tData->status.MSP1Sensor && !p_tData->fault.MSP1Sensor)
@@ -556,7 +567,7 @@ static bool bHalDisplay_drawMsp1Unavailable(sensorData_t *p_tData, systemStatus_
  * @param devinfoPtr
  * @param secdelay
  ************************************************************************************/
-void vHalDisplay_drawMsp1AdcSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawMsp1AdcSensorData(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   if (bHalDisplay_drawMsp1Unavailable(p_tData, statPtr, devinfoPtr, "ADC", secdelay))
   {
@@ -614,7 +625,7 @@ void vHalDisplay_drawMsp1AdcSensorData(sensorData_t *p_tData, systemStatus_t *st
  * @param devinfoPtr
  * @param secdelay
  ************************************************************************************/
-void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   if (bHalDisplay_drawMsp1Unavailable(p_tData, statPtr, devinfoPtr, "Heater (CH1)/DAC", secdelay))
   {
@@ -671,7 +682,7 @@ void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *st
  * @param devinfoPtr
  * @param secdelay
  ************************************************************************************/
-void vHalDisplay_drawMsp1Rno2Data(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawMsp1Rno2Data(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   if (bHalDisplay_drawMsp1Unavailable(p_tData, statPtr, devinfoPtr, "NO2 Sensor (Rno2)", secdelay))
   {
@@ -726,7 +737,7 @@ void vHalDisplay_drawMsp1Rno2Data(sensorData_t *p_tData, systemStatus_t *statPtr
  * @param statPtr
  * @param devinfoPtr
  *********************************************************************************/
-void vHalDisplay_drawFirmwareVersion(systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, const uint8_t secDelay)
+void vHalDisplay_drawFirmwareVersion(systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, const uint8_t secDelay)
 {
   // Extract short version (e.g., "4.1.4.1" from "v4.1.4.1-3-gad10b38")
   String fwVersion = String(VERSION_STRING);
@@ -759,7 +770,7 @@ void vHalDisplay_drawFirmwareVersion(systemStatus_t *statPtr, deviceNetworkInfo_
  * @param devinfoPtr
  * @param measPtr
  *********************************************************************************/
-void vHalDisplay_drawConfigurationValues(sensorData_t *p_tData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, deviceMeasurement_t *measPtr, const uint8_t secDelay)
+void vHalDisplay_drawConfigurationValues(sensorData_t *p_tData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, deviceMeasurement_t *measPtr, const uint8_t secDelay)
 {
   // Screen 1: General configuration
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
@@ -829,7 +840,7 @@ void vHalDisplay_drawConfigurationValues(sensorData_t *p_tData, systemStatus_t *
  * @param statPtr
  * @param devinfoPtr
  *********************************************************************************/
-void vHalDisplay_drawMicsValues(uint16_t redval, uint16_t oxval, uint16_t nh3val, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr)
+void vHalDisplay_drawMicsValues(uint16_t redval, uint16_t oxval, uint16_t nh3val, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr)
 {
   // log_d("MICS6814 stored base resistance values:");
   // log_d("RED: %d | OX: %d | NH3: %d\n", redval, oxval, nh3val);
@@ -844,6 +855,26 @@ void vHalDisplay_drawMicsValues(uint16_t redval, uint16_t oxval, uint16_t nh3val
   u8g2.print("NH3: " + String(nh3val));
   u8g2.sendBuffer();
   delay(5000);
+}
+
+/******************************************************************************************
+ * @brief Copy the String fields the screens use into the queue-safe display structs
+ *        (see dispDevInfo_t). Call with the data-access mutex held.
+ ******************************************************************************************/
+static void vHalDisplay_copyDevInfo(dispDevInfo_t *dst, const deviceNetworkInfo_t *src)
+{
+  strlcpy(dst->deviceid, src->deviceid.c_str(), sizeof(dst->deviceid));
+  strlcpy(dst->baseMacChr, src->baseMacChr, sizeof(dst->baseMacChr));
+  strlcpy(dst->remain, src->remain.c_str(), sizeof(dst->remain));
+  strlcpy(dst->noNet, src->noNet.c_str(), sizeof(dst->noNet));
+}
+
+static void vHalDisplay_copySysData(dispSysData_t *dst, const systemData_t *src)
+{
+  strlcpy(dst->ver, src->ver.c_str(), sizeof(dst->ver));
+  strlcpy(dst->Date, src->Date, sizeof(dst->Date));
+  strlcpy(dst->Time, src->Time, sizeof(dst->Time));
+  strlcpy(dst->currentDataTime, src->currentDataTime.c_str(), sizeof(dst->currentDataTime));
 }
 
 /******************************************************************************************
@@ -865,11 +896,11 @@ void updateDisplayStatus(deviceNetworkInfo_t *devInfo, systemStatus_t *sysStatus
   localDisplayData.currentEvent = event;
 
   vMspOs_takeDataAccessMutex();
-  localDisplayData.devInfo = *devInfo;
+  vHalDisplay_copyDevInfo(&localDisplayData.devInfo, devInfo);
   localDisplayData.sysStat = *sysStatus;
   if (sysData)
   {
-    localDisplayData.sysData = *sysData;
+    vHalDisplay_copySysData(&localDisplayData.sysData, sysData);
     localDisplayData.hasSysData = true;
   }
   vMspOs_giveDataAccessMutex();
@@ -902,9 +933,9 @@ void vMsp_updateDataAndSendEvent(displayEvents_t event,
   vMspOs_takeDataAccessMutex();
 
   localDisplayData.sensorData = *sensorData; // Always copy so fallback SHOW_MEAS_DATA has valid status flags
-  localDisplayData.devInfo = *devInfo;
+  vHalDisplay_copyDevInfo(&localDisplayData.devInfo, devInfo);
   localDisplayData.measStat = *measStat;
-  localDisplayData.sysData = *sysData;
+  vHalDisplay_copySysData(&localDisplayData.sysData, sysData);
   localDisplayData.sysStat = *sysStat;
 
   vMspOs_giveDataAccessMutex();
@@ -920,7 +951,7 @@ void vMsp_updateDataAndSendEvent(displayEvents_t event,
  * @param devinfoPtr device network info structure
  * @param secdelay   seconds to show the screen
  *********************************************************************************/
-void vHalDisplay_drawDateTime(systemData_t *p_tSysData, systemStatus_t *statPtr, deviceNetworkInfo_t *devinfoPtr, short secdelay)
+void vHalDisplay_drawDateTime(systemData_t *p_tSysData, systemStatus_t *statPtr, dispDevInfo_t *devinfoPtr, short secdelay)
 {
   short offsetDate = sHalDisplay_getLineHOffset(p_tSysData->Date);
   short offsetTime = sHalDisplay_getLineHOffset(p_tSysData->Time);
