@@ -687,52 +687,22 @@ static bool downloadFileWiFi(const String &url, const String &filepath)
 {
     log_i("WiFi download: %s", url.c_str());
 
+    // Declared before http so it outlives it: after a failed connect, end() keeps the
+    // client pointer and ~HTTPClient() calls stop() on it.
+    WiFiClientSecure secureClient;
     HTTPClient http;
     http.setTimeout(FIRMWARE_UPDATE_TIMEOUT_MS);
 
     // Handle both HTTP and HTTPS URLs with proper client setup
-    WiFiClientSecure *secureClient = nullptr;
-    bool usedSpiram = false;
-
     if (url.startsWith("https://"))
     {
-        // Use SPIRAM for WiFiClientSecure allocation to avoid heap issues
-        secureClient = (WiFiClientSecure *)heap_caps_malloc(sizeof(WiFiClientSecure), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
-        if (!secureClient)
-        {
-            log_w("SPIRAM allocation failed, trying regular heap");
-            secureClient = new (std::nothrow) WiFiClientSecure();
-            if (!secureClient)
-            {
-                log_e("Failed to allocate WiFiClientSecure - insufficient memory");
-                clearFirmwareDownloadInProgress();
-                return false;
-            }
-        }
-        else
-        {
-            // Construct the object in the SPIRAM memory
-            new (secureClient) WiFiClientSecure();
-            usedSpiram = true;
-            log_i("WiFiClientSecure allocated in SPIRAM");
-        }
+        secureClient.setInsecure();              // Accept all certificates for simplicity
+        secureClient.setTimeout(60000);          // 60 second timeout for large downloads
+        secureClient.setHandshakeTimeout(30000); // 30 second handshake timeout
 
-        secureClient->setInsecure();              // Accept all certificates for simplicity
-        secureClient->setTimeout(60000);          // 60 second timeout for large downloads
-        secureClient->setHandshakeTimeout(30000); // 30 second handshake timeout
-
-        if (!http.begin(*secureClient, url))
+        if (!http.begin(secureClient, url))
         {
             log_e("Failed to initialize HTTPS client for download");
-            if (usedSpiram)
-            {
-                secureClient->~WiFiClientSecure();
-                heap_caps_free(secureClient);
-            }
-            else
-            {
-                delete secureClient;
-            }
             clearFirmwareDownloadInProgress();
             return false;
         }
@@ -784,18 +754,6 @@ static bool downloadFileWiFi(const String &url, const String &filepath)
     {
         log_e("Connection failed after %d attempts with error: %d", maxRetries, httpCode);
         http.end();
-        if (secureClient)
-        {
-            if (usedSpiram)
-            {
-                secureClient->~WiFiClientSecure();
-                heap_caps_free(secureClient);
-            }
-            else
-            {
-                delete secureClient;
-            }
-        }
         return false;
     }
 
@@ -820,18 +778,6 @@ static bool downloadFileWiFi(const String &url, const String &filepath)
         if (!http.begin(newLocation))
         {
             log_e("Failed to begin HTTP client for redirect URL");
-            if (secureClient)
-            {
-                if (usedSpiram)
-                {
-                    secureClient->~WiFiClientSecure();
-                    heap_caps_free(secureClient);
-                }
-                else
-                {
-                    delete secureClient;
-                }
-            }
             return false;
         }
 
@@ -843,18 +789,6 @@ static bool downloadFileWiFi(const String &url, const String &filepath)
     {
         log_e("Download request failed with code: %d after %d redirects", httpCode, redirectCount);
         http.end();
-        if (secureClient)
-        {
-            if (usedSpiram)
-            {
-                secureClient->~WiFiClientSecure();
-                heap_caps_free(secureClient);
-            }
-            else
-            {
-                delete secureClient;
-            }
-        }
         return false;
     }
 
@@ -870,18 +804,6 @@ static bool downloadFileWiFi(const String &url, const String &filepath)
     {
         log_e("Failed to create download file: %s", filepath.c_str());
         http.end();
-        if (secureClient)
-        {
-            if (usedSpiram)
-            {
-                secureClient->~WiFiClientSecure();
-                heap_caps_free(secureClient);
-            }
-            else
-            {
-                delete secureClient;
-            }
-        }
         return false;
     }
     log_i("SD card file opened successfully");
@@ -1038,21 +960,6 @@ static bool downloadFileWiFi(const String &url, const String &filepath)
 
     // Save bytesWritten before any cleanup to avoid corruption
     int finalBytesWritten = bytesWritten;
-
-    // Clean up HTTPS client if used
-    if (secureClient)
-    {
-        if (usedSpiram)
-        {
-            secureClient->~WiFiClientSecure();
-            heap_caps_free(secureClient);
-        }
-        else
-        {
-            delete secureClient;
-        }
-        secureClient = nullptr;
-    }
 
     // Check if download was successful - require exact file size match for FOTA safety
     bool downloadSuccessful = false;

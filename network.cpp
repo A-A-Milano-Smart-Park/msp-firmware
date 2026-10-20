@@ -957,21 +957,17 @@ static bool pingServer(const String &serverName)
 {
     log_i("Pinging server to check connectivity: %s", serverName.c_str());
 
-    // Create a simple HTTP client for ping
+    // Create a simple HTTP client for ping. The SSL client is declared first so it outlives
+    // pingClient: after a failed connect, end() keeps the client pointer and ~HTTPClient()
+    // calls stop() on it.
+    WiFiClientSecure pingSSLClient;
     HTTPClient pingClient;
-    WiFiClientSecure *pingSSLClient = new WiFiClientSecure;
-
-    if (!pingSSLClient)
-    {
-        log_e("Failed to create SSL client for server ping");
-        return false;
-    }
 
     // Configure SSL client (same settings as main transmission)
-    pingSSLClient->setInsecure();                           // Skip certificate validation
+    pingSSLClient.setInsecure();                            // Skip certificate validation
     String pingURL = "https://" + serverName + "/api/ping"; // Try ping endpoint first
 
-    pingClient.begin(*pingSSLClient, pingURL);
+    pingClient.begin(pingSSLClient, pingURL);
     pingClient.setTimeout(10000); // Short 10-second timeout for ping
 
     // Send a simple GET request to check server availability
@@ -982,7 +978,7 @@ static bool pingServer(const String &serverName)
     {
         pingClient.end();
         String dataURL = "https://" + serverName + "/api/data";
-        pingClient.begin(*pingSSLClient, dataURL);
+        pingClient.begin(pingSSLClient, dataURL);
         httpCode = pingClient.sendRequest("HEAD", "");
     }
 
@@ -998,7 +994,6 @@ static bool pingServer(const String &serverName)
     }
 
     pingClient.end();
-    delete pingSSLClient;
 
     return serverAvailable;
 }
