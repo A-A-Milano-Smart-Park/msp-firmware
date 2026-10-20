@@ -20,20 +20,28 @@
 /* ---- local constants ---- */
 
 /**
- * NAU7802 PGA gain.  GAIN_1 is the only setting for which the PGA may be
- * bypassed (see s_initADC): the signal path is ADC-only, so the PGA no longer
- * contributes offset/noise and the input common mode may be extended with
- * ADC_VCM below.
+ * NAU7802 PGA gain, shared by both channels (CTRL1 GAINS has no per-channel
+ * copy). Both channels run with the PGA in the path at this gain; GAIN_1 is
+ * also the only gain at which the -DMSP1_CH0_PGA=0 build may bypass it.
  */
 #define MSP1_NAU7802_GAIN NAU7802_GAIN_1
+
+/** Numeric PGA gain programmed by MSP1_NAU7802_GAIN: the Adafruit enum value
+ *  is log2(gain) (NAU7802_GAIN_1 = 0 ... NAU7802_GAIN_128 = 7). */
+#define MSP1_PGA_GAIN ((float)(1U << (unsigned)MSP1_NAU7802_GAIN))
 
 /** Minimum sample rate: 10 SPS maximises noise integration. */
 #define MSP1_NAU7802_SPS NAU7802_RATE_10SPS
 
 /**
- * Full-scale positive value of the 24-bit signed ADC output (2^23 − 1).
+ * Counts spanned by the input full scale of the 24-bit two's-complement output:
+ * (VINxP − VINxN) = ±0.5 × VREF / PGA_gain maps to ±2^23, so
+ * V = code / 2^23 × full scale. The highest code is MSP1_ADC_MAX_CODE.
  */
-#define MSP1_ADC_FULL_SCALE (8388607.0f)
+#define MSP1_ADC_FULL_SCALE (8388608.0f)
+
+/** Highest positive output code (2^23 − 1): where the ADC clips. */
+#define MSP1_ADC_MAX_CODE   (8388607)
 
 /**
  * NAU7802 ADC control register (REG 0x15) and its ADC_VCM field [3:2]: input
@@ -69,29 +77,24 @@
 #define MSP1_ADC_CALIBRATION_TIMEOUT_MS (2000U)
 
 /**
- * CH0 front end. 1 = PGA in the path at GAIN=1 and ADC_VCM normal, like CH1:
- * full scale drops to the ordinary +/-AVDD/2 and the input loses the extended
- * common mode, so CH0 must stay below AVDD/2 and off the rails. 0 = PGA
- * bypassed with the extended common mode near REFN, full scale +/-AVDD.
+ * CH0 front end. 1 (default) = PGA in the path and ADC_VCM normal, the same
+ * profile as CH1: full scale +/-AVDD/(2 x gain), and the input must stay
+ * inside the PGA common-mode range, off the rails. 0 = PGA bypassed with the
+ * extended common mode near REFN, full scale +/-AVDD.
  *
- * Bench knob, -DMSP1_CH0_PGA=0 goes back. It also decides whether
- * MSP1_CH0_ZERO_CAL means anything: REG 0x11 SI shorts inside the PGA.
+ * Bench knob, -DMSP1_CH0_PGA=0 selects the bypass. It also gates the CH0 zero
+ * calibration in s_initADC(): REG 0x11 SI shorts inside the PGA, so with the
+ * PGA bypassed the calibration never sees a short and bakes in whatever is
+ * live on CH0 instead — last attempt stored 255 mV and published a real
+ * 230 mV input as 0.
  */
 #ifndef MSP1_CH0_PGA
-#define MSP1_CH0_PGA (0)
+#define MSP1_CH0_PGA (1)
 #endif
 
-/**
- * Zero-calibrate CH0 at boot, alongside CH1. Only real with MSP1_CH0_PGA=1:
- * SI shorts inside the PGA, so with the PGA bypassed the calibration never
- * sees a short and bakes in whatever is live on CH0 instead — last attempt
- * stored 255 mV and published a real 230 mV input as 0.
- *
- * -DMSP1_CH0_ZERO_CAL=0 turns it off. The one condition it cannot check: CH0
- * must actually sit at its zero when s_initADC() runs.
- */
-#ifndef MSP1_CH0_ZERO_CAL
-#define MSP1_CH0_ZERO_CAL (1)
+#if (MSP1_CH0_PGA == 0)
+static_assert(MSP1_NAU7802_GAIN == NAU7802_GAIN_1,
+              "PGA bypass (MSP1_CH0_PGA=0) is only legal at NAU7802_GAIN_1");
 #endif
 
 /**
@@ -105,7 +108,7 @@
  * Expected latency is ≤100 ms at 10 SPS; this is a generous multiple so a
  * stuck/absent conversion (bus contention, hardware fault) returns
  * STATUS_ERR instead of blocking the caller — and with it the whole main
- * loop, since the sampling functions run on every SYS_STATE_WAIT_FOR_TIMEOUT
+ * loop, since the sampling functions run on every measurement-cycle loop()
  * pass — forever.
  */
 #define MSP1_ADC_CONVERSION_TIMEOUT_MS (500U)
@@ -128,21 +131,19 @@
 /* ---- local types ---- */
 
 /**
- * Per-channel ADC front-end profile, re-applied on every channel switch so each
- * measurement runs in the mode that suits it. The two channels want opposite
- * things:
+ * Per-channel ADC front-end profile, re-applied on every channel switch.
+ * With MSP1_CH0_PGA=1 (default) both rows are the same:
  *
- *   CH0 (sensor)  MICS-2714 output, ground-referred and effectively
- *                 single-ended. Which front end it gets is MSP1_CH0_PGA:
- *                 bypassed PGA + extended common mode near REFN (full scale
- *                 ±AVDD, input may sit at a rail), or the same PGA-in-path
- *                 profile as CH1 (full scale ±AVDD/2, no rail).
+ *   CH0 (sensor)  MICS-2714 output. MSP1_CH0_PGA=1: PGA in the path, ADC_VCM
+ *                 0b00, full scale ±AVDD/(2·gain), input off the rails.
+ *                 MSP1_CH0_PGA=0: PGA bypassed + extended common mode near
+ *                 REFN, full scale ±AVDD, input may sit at a rail.
  *
  *   CH1 (heater)  Drop across R14, measured high-side between the DAC buffer
  *                 and the heater: a genuine differential signal riding on a
  *                 large common mode. Here CMRR is what the measurement lives
  *                 on, so the PGA stays in the path and ADC_VCM stays at 0b00.
- *                 Full scale is the normal ±AVDD/2.
+ *                 Full scale is the normal ±AVDD/(2·gain).
  *
  * fsMult is the full-scale multiplier the mode implies, applied in s_rawToMv().
  */
@@ -164,7 +165,7 @@ typedef struct __MSP1_DISP_RING_T__
 /* Indexed by msp1AdcChannel_t (CH_SENSOR = 0, CH_HEATER = 1). */
 static const msp1AdcProfile_t MSP1_ADC_PROFILE[] = {
 #if (MSP1_CH0_PGA != 0)
-  { false, MSP1_ADC_VCM_NORMAL,    1.0f }, /* CH0 sensor: PGA in path, FS +/-AVDD/2   */
+  { false, MSP1_ADC_VCM_NORMAL,    1.0f }, /* CH0 sensor: PGA in path, FS +/-AVDD/(2*G) */
 #else
   { true,  MSP1_ADC_VCM_NEAR_REFN, 2.0f }, /* CH0 sensor: single-ended, PGA bypassed  */
 #endif
@@ -328,13 +329,18 @@ static float s_avdd_mV(void)
 
 /******************************************************************************
  * @brief Input full-scale voltage (mV) of the given channel, from the AVDD in
- *        effect (s_avdd_mV()). At GAIN=1 with the PGA in the path full scale
- *        is AVDD/2; the extended common mode used by CH0 halves the ADC gain,
- *        hence its fsMult of 2 (full scale ±AVDD).
+ *        effect (s_avdd_mV()) — datasheet §9.2/§9.3:
+ *          PGA in the path:  ±0.5 × VREF / PGA_gain
+ *          PGA bypassed:     ±0.5 × VREF (the gain no longer applies)
+ *        The extended common mode used by the CH0 bypass build halves the ADC
+ *        gain, hence its fsMult of 2 (full scale ±AVDD).
  *****************************************************************************/
 static float s_adcFullScale_mV(msp1AdcChannel_t channel)
 {
-  return (s_avdd_mV() / 2.0f) * MSP1_ADC_PROFILE[channel].fsMult;
+  const msp1AdcProfile_t *p = &MSP1_ADC_PROFILE[channel];
+  float fPgaGain = p->pgaBypass ? 1.0f : MSP1_PGA_GAIN;
+
+  return (s_avdd_mV() / 2.0f) * p->fsMult / fPgaGain;
 }
 
 /******************************************************************************
@@ -351,10 +357,9 @@ static float s_rawToMv(float raw, msp1AdcChannel_t channel)
 }
 
 /******************************************************************************
- * @brief Write the ADC_VCM field of REG 0x15 (read-modify-write, so the
- *        chopper bits set by begin() are preserved). The Adafruit driver
- *        exposes no setter for this field and keeps its I2C device private,
- *        hence the direct Wire access.
+ * @brief Read one NAU7802 register. The Adafruit driver exposes no access to
+ *        ADC_VCM, SI or the calibration fields and keeps its I2C device
+ *        private, hence the direct Wire access.
  *****************************************************************************/
 static bool s_regRead(uint8_t reg, uint8_t *out)
 {
@@ -402,6 +407,10 @@ static bool s_regUpdate(uint8_t reg, uint8_t mask, uint8_t value)
   return (Wire.endTransmission() == 0U);
 }
 
+/******************************************************************************
+ * @brief Write the ADC_VCM field of REG 0x15, preserving the chopper bits set
+ *        by begin().
+ *****************************************************************************/
 static bool s_setAdcVcm(uint8_t vcmBits)
 {
   return s_regUpdate(MSP1_NAU7802_REG_ADC, MSP1_ADC_VCM_MASK, vcmBits);
@@ -411,7 +420,8 @@ static bool s_setAdcVcm(uint8_t vcmBits)
  * @brief Apply a channel's ADC front-end profile (PGA bypass + ADC_VCM).
  *        Order matters: the extended common mode is only valid with the PGA
  *        bypassed, so entering it bypasses first, and leaving it clears
- *        ADC_VCM before putting the PGA back in the path.
+ *        ADC_VCM before putting the PGA back in the path. With both profiles
+ *        equal (MSP1_CH0_PGA=1) the ADC_VCM write is skipped as a no-op.
  *****************************************************************************/
 static bool s_applyAdcProfile(msp1AdcChannel_t channel)
 {
@@ -436,9 +446,9 @@ static bool s_applyAdcProfile(msp1AdcChannel_t channel)
  * @brief Wait (bounded) for the next conversion to become available.
  *
  *        Bounded and not a plain spin because available() is reliably false
- *        right after a channel switch, and every pass through
- *        SYS_STATE_WAIT_FOR_TIMEOUT alternates CH0/CH1: an unbounded wait
- *        would freeze the whole main loop if a conversion is ever late.
+ *        right after a channel switch, and every measurement-cycle loop()
+ *        pass alternates CH0/CH1: an unbounded wait would freeze the whole
+ *        main loop if a conversion is ever late.
  *
  * @param tag  Caller name, used in the timeout warning.
  * @return true when a conversion is ready, false on timeout (already logged).
@@ -495,9 +505,9 @@ static bool s_selectChannel(msp1AdcChannel_t channel)
   (void)s_nau7802.setChannel((uint8_t)channel);
   s_currentChannel = (uint8_t)channel;
 
-  /* The two channels want opposite front-ends (see MSP1_ADC_PROFILE), so the
-   * ADC is reconfigured on every switch. Costs two short I2C writes; the
-   * settling they need is already paid for by the flush below. */
+  /* Each channel's front end is re-applied on every switch (see
+   * MSP1_ADC_PROFILE). Costs at most two short I2C writes; the settling they
+   * need is already paid for by the flush below. */
   if (!s_applyAdcProfile(channel))
   {
     log_w("selectChannel: ADC profile write failed (channel %u)", (unsigned)channel);
@@ -510,7 +520,8 @@ static bool s_selectChannel(msp1AdcChannel_t channel)
  * @brief Zero-calibrate one channel: select it, short the inputs with SI,
  *        trigger a system offset calibration, wait for CALS to clear, release
  *        the short and flush. The result lands in that channel's own offset
- *        registers. On CH0 the short is a no-op — see MSP1_CH0_ZERO_CAL.
+ *        registers. SI shorts inside the PGA, so this needs the channel's
+ *        PGA in the path — see MSP1_CH0_PGA.
  *****************************************************************************/
 static bool s_calibrateZero(msp1AdcChannel_t channel)
 {
@@ -610,7 +621,7 @@ static uint16_t s_currentToDAC(float current_mA)
 {
   float fVdrive_mV = current_mA * (MSP1_HEATER_R14_OHM + s_getRHeatEffective());
 
-  uint32_t u32Code = (uint32_t)((fVdrive_mV / s_config.dacVdd_mV) * (float)MSP1_DAC_MAX_VALUE);
+  uint32_t u32Code = (uint32_t)((fVdrive_mV / s_config.dacVdd_mV) * (float)MSP1_DAC_STEPS);
 
   if (u32Code > (uint32_t)MSP1_DAC_MAX_SAFE)
   {
@@ -698,8 +709,8 @@ static void s_rampToDAC(uint16_t targetCode)
 }
 
 /******************************************************************************
- * @brief Set the MCP4725 DAC to a raw 12-bit count. Range-checked, hard-clamped
- *        to MSP1_DAC_MAX_SAFE, does not write to EEPROM.
+ * @brief Set the MCP4725 DAC to a raw 12-bit count. Setpoints above
+ *        MSP1_DAC_MAX_SAFE are rejected, not clamped; does not write to EEPROM.
  *****************************************************************************/
 static mspStatus_t s_setDAC(uint16_t setpoint)
 {
@@ -709,7 +720,8 @@ static mspStatus_t s_setDAC(uint16_t setpoint)
     return STATUS_ERR;
   }
 
-  /* Hard safety ceiling — never exceed MSP1_DAC_MAX_SAFE (50 mW limit) */
+  /* Hard ceiling at MSP1_DAC_MAX_SAFE. The 50 mW / 27.53 mA limits are
+   * enforced on measurements in tMsp1_measureHeater(), not here. */
   if (setpoint > MSP1_DAC_MAX_SAFE)
   {
     log_e("DAC setpoint %u exceeds safety limit %u — rejected", setpoint, MSP1_DAC_MAX_SAFE);
@@ -787,18 +799,19 @@ static mspStatus_t s_initADC(void)
 
   /* PGA bypass and ADC_VCM are not set here: they belong to the per-channel
    * profile that s_selectChannel applies on every switch (MSP1_ADC_PROFILE).
-   * Note the bypass is only legal at GAIN=1, which MSP1_NAU7802_GAIN is. */
+   * The bypass is only legal at GAIN=1: see the static_assert by MSP1_CH0_PGA. */
 
-  /* Non-fatal: a failure just means the part keeps its power-on offset, which
-   * reset() has already cleared this boot. CH1 has the PGA in the path, which
-   * is where SI shorts, and the DAC is already parked at 0 V (see tMsp1_init). */
+  /* Zero calibration, one channel at a time — each lands in that channel's
+   * own offset registers. Non-fatal: a failure just leaves that channel at
+   * the zero offset reset() programmed this boot. The DAC is already parked
+   * at 0 V (see tMsp1_init). */
   if (!s_calibrateZero(MSP1_ADC_CH_HEATER))
   {
     log_w("NAU7802: heater channel zero calibration failed, running uncalibrated");
   }
 
-#if (MSP1_CH0_ZERO_CAL != 0)
-  /* Caveats in MSP1_CH0_ZERO_CAL: this stores the live CH0 input, not a short. */
+#if (MSP1_CH0_PGA != 0)
+  /* Only with the PGA in the path: see MSP1_CH0_PGA. */
   if (!s_calibrateZero(MSP1_ADC_CH_SENSOR))
   {
     log_w("NAU7802: sensor channel zero calibration failed, running uncalibrated");
@@ -814,8 +827,9 @@ static mspStatus_t s_initADC(void)
 
   /* The CH0 front end changes what its numbers mean, so it goes in the boot
    * log rather than being something you infer from a build flag. */
-  log_i("NAU7802 initialised (GAIN=1, 10 SPS, CH1 differential/PGA in path, "
+  log_i("NAU7802 initialised (GAIN=%.0f, 10 SPS, CH1 differential/PGA in path, "
         "CH0 %s, full scale +/-%.0f mV)",
+        MSP1_PGA_GAIN,
 #if (MSP1_CH0_PGA != 0)
         "PGA in path/ADC_VCM normal",
 #else
@@ -1001,8 +1015,8 @@ mspStatus_t tMsp1_accumulateSensor(void)
   s32Raw = s_nau7802.read();
 
   float fRaw_mV = s_rawToMv((float)s32Raw, MSP1_ADC_CH_SENSOR);
-  /* Positive saturation: raw at or within 100 counts of 24-bit full scale */
-  bool bSaturated = (s32Raw >= ((int32_t)MSP1_ADC_FULL_SCALE - 100));
+  /* Positive saturation: raw at or within 100 counts of the highest code */
+  bool bSaturated = (s32Raw >= (MSP1_ADC_MAX_CODE - 100));
 
   vMspOs_takeDataAccessMutex();
   s_data.sensor.rawSum += (int64_t)s32Raw;
@@ -1122,8 +1136,8 @@ mspStatus_t tMsp1_computeRno2(void)
  *
  * Live Rno2 from the published sliding-window CH0 average (last
  * MSP1_DISPLAY_AVG_SAMPLES samples, refreshed on every accumulateSensor()
- * call), so the result only remembers the last ~MSP1_DISPLAY_AVG_SAMPLES giri
- * instead of the whole transmission window.
+ * call), so the result only remembers the last ~MSP1_DISPLAY_AVG_SAMPLES
+ * loop() passes instead of the whole transmission window.
  *****************************************************************************/
 mspStatus_t tMsp1_peekRno2Ring(float *out_rno2_ohm)
 {
@@ -1176,7 +1190,7 @@ mspStatus_t tMsp1_peekRno2Ratio(float *out_ratio)
 /******************************************************************************
  * tMsp1_measureHeater
  *
- *   CH2 (DRIVE − HEAT) -> V_R14 (differential drop across R14 = 50 Ω)
+ *   CH1 (DRIVE − HEAT) -> V_R14 (differential drop across R14 = 50 Ω)
  *   V_DRIVE = dacSetpoint / 4096 × VDD_DAC
  *   I_heat  = V_R14  / R14           (mA)
  *   V_heat  = V_DRIVE − V_R14        (mV)
@@ -1213,7 +1227,7 @@ mspStatus_t tMsp1_measureHeater(void)
   }
 
   /* V_DRIVE reconstructed from DAC setpoint using the configured DAC supply */
-  float fVdrive_mV = ((float)s_data.heater.dacSetpoint / (float)MSP1_DAC_MAX_VALUE) * s_config.dacVdd_mV;
+  float fVdrive_mV = ((float)s_data.heater.dacSetpoint / (float)MSP1_DAC_STEPS) * s_config.dacVdd_mV;
 
   /* Derived heater quantities (computed into locals, published as one group)
    *   I  [mA]  = V_R14 [mV] / R14 [Ω]

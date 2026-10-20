@@ -539,7 +539,7 @@ void loop()
 
 #ifdef MSP1_DEBUG_ENABLE
   {
-    /* Debug read cycle (~1 s): measure heater, run PI step, accumulate sensor
+    /* Debug read cycle (~3 s): measure heater, run control step, accumulate sensor
      * samples, compute average, then push a display update.  No data is
      * transmitted, logged, or saved. */
     tMsp1_measureHeater();
@@ -575,7 +575,7 @@ void loop()
   }
 #endif
 
-  // MSP1 background service: heater measure + PI step + one CH0 sample into
+  // MSP1 background service: heater measure + control step + one CH0 sample into
   // ring/accumulator, once per loop() pass in EVERY measurement-cycle state —
   // not just SYS_STATE_WAIT_FOR_TIMEOUT — so the heater stays in closed loop
   // and Rno2 keeps integrating also across EVAL/SEND/config/FOTA passes.
@@ -880,7 +880,7 @@ void loop()
     
   case SYS_STATE_WAIT_FOR_TIMEOUT:
   {
-    // MSP1 servicing (heater measure + PI + CH0 sample) runs at the top of
+    // MSP1 servicing (heater measure + control step + CH0 sample) runs at the top of
     // loop() for every measurement-cycle state — see the background service
     // block before the state switch. Here only the idle display refresh.
     //
@@ -1125,7 +1125,7 @@ void loop()
 
     // MSP1 heater: the loop()-top background service excludes
     // SYS_STATE_READ_SENSORS, so everything above (accumulation reset,
-    // display update, BME680 sampling with its retry delays) runs with no PI
+    // display update, BME680 sampling with its retry delays) runs with no heater
     // correction at all — up to a few seconds. Service it once more here so
     // the MSP1 case below starts from a freshly corrected heater resistance
     // instead of whatever it drifted to during that gap.
@@ -1293,7 +1293,7 @@ void loop()
 
         for (int retry = 0; retry < MAX_SENSOR_RETRIES; retry++)
         {
-          /* Step 1 — update heater measurement (NAU7802 CH2) */
+          /* Step 1 — update heater measurement (NAU7802 CH1) */
           if (tMsp1_measureHeater() != STATUS_OK)
           {
             err.count++;
@@ -1311,7 +1311,7 @@ void loop()
           /* Step 2 — control step: hold R_heat at the configured R@Tmax */
           (void)tMsp1_heaterControlStep();
 
-          /* Step 3 — accumulate one NO2 sample (NAU7802 CH1) */
+          /* Step 3 — accumulate one NO2 sample (NAU7802 CH0) */
           if (tMsp1_accumulateSensor() != STATUS_OK)
           {
             err.count++;

@@ -3,10 +3,12 @@
  * @author  AB-Engineering - https://ab-engineering.it
  * @brief   MICS-2714 NO2 sensor and heater driver via NAU7802 ADC and MCP4725 DAC.
  *
- *          NAU7802 channel assignment:
- *            CH1 – differential NO2 sensor output  (OUT+ / OUT-)
- *            CH2 – heater sense, differential       (DRIVE / HEAT)
- *                  → V_CH2 = V_DRIVE − V_HEAT = drop across R14
+ *          NAU7802 channel assignment (0-based, see msp1AdcChannel_t):
+ *            CH0 – differential NO2 sensor output  (OUT+ / OUT-)
+ *            CH1 – heater sense, differential       (DRIVE / HEAT)
+ *                  → V_CH1 = V_DRIVE − V_HEAT = drop across R14
+ *            Both with the PGA in the path at GAIN=1 and zero-calibrated at
+ *            boot (default MSP1_CH0_PGA=1, see msp1.cpp).
  *
  *          Heater path:
  *            MCP4725 → buffer U2A → R14 (50 Ω) → R_heater (66 Ω nom.) → GND
@@ -44,8 +46,10 @@
 #define MSP1_MCP4725_I2C_ADDR_MIN    (0x60U)
 #define MSP1_MCP4725_I2C_ADDR_MAX    (0x67U)
 
-/** MCP4725 full-scale 12-bit count */
-#define MSP1_DAC_MAX_VALUE           (4095U)
+/** MCP4725 12-bit resolution, 2^12 steps: Vout = VDD × code / 4096 (datasheet),
+ *  so the highest code 4095 gives VDD × 4095/4096. The highest code allowed
+ *  is MSP1_DAC_MAX_SAFE. */
+#define MSP1_DAC_STEPS               (4096U)
 
 /* ---- NAU7802 channel assignment ---- */
 
@@ -69,12 +73,13 @@ typedef enum __MSP1_ADC_CHANNEL__
  *  index 5 = 3.9 V. Compile-time fallback for msp1Config_t::ldoIndex when
  *  "ldo_index" is absent from config.
  *
- *  The NAU7802 runs off its internal LDO, so the step programmed with setLDO()
- *  IS AVDD: that one table row drives both the setLDO() call and the mV used in
- *  every raw→mV conversion.
+ *  With the internal LDO on (any ldo_index but MSP1_LDO_INDEX_EXTERNAL) the
+ *  step programmed with setLDO() IS AVDD: that one table row drives both the
+ *  setLDO() call and the mV used in every raw→mV conversion.
  *
  *  AVDD sets the ADC input range, which is per channel — see MSP1_ADC_PROFILE
- *  in msp1.cpp, applied on every channel switch. At the default 3.9 V:
+ *  and s_adcFullScale_mV() in msp1.cpp; with the PGA in the path it is also
+ *  divided by the PGA gain. At the default 3.9 V and GAIN=1:
  *    CH0 (sensor): front end selected by MSP1_CH0_PGA in msp1.cpp — PGA in
  *                  the path at GAIN=1 (full scale ±AVDD/2, the default), or
  *                  PGA bypassed + extended common mode near REFN (±AVDD).
@@ -83,10 +88,10 @@ typedef enum __MSP1_ADC_CHANNEL__
  *                  → ±1950 mV (V_R14 is far below this).
  *
  *  ADC saturation: V_diff max = 3200 mV (at Rno2=66kΩ) fits inside CH0's
- *  ±3900 mV full scale only with MSP1_CH0_PGA=0. With the PGA in the path CH0
- *  stops at ±AVDD/2 (±1950 mV at the default), so the top of the 2 k–66 kΩ
- *  sensor range clips — a bench setting, not a release one. Lowering
- *  ldo_index shrinks every range proportionally. */
+ *  ±3900 mV full scale only with MSP1_CH0_PGA=0. With the PGA in the path (the
+ *  default) CH0 stops at ±AVDD/2 (±1950 mV at the default), so Rno2 above
+ *  ~39 kΩ (1950 mV / 50 µA) clips and is flagged through sensor.saturated.
+ *  Lowering ldo_index shrinks every range proportionally. */
 #define MSP1_LDO_DEFAULT_INDEX       (5U)
 
 /** "ldo_index" value selecting EXTERNAL AVDD: the internal LDO is switched
@@ -126,7 +131,7 @@ typedef enum __MSP1_ADC_CHANNEL__
 /* ---- heater constants ---- */
 
 /** Series current-limiting resistor R14 between DAC buffer and heater (Ω).
- *  NAU7802 CH2 measures the differential voltage across this resistor,
+ *  NAU7802 CH1 measures the differential voltage across this resistor,
  *  high-side — hence CH1's differential/full-CMRR profile in MSP1_ADC_PROFILE. */
 #define MSP1_HEATER_R14_OHM          (50.0f)
 
@@ -155,10 +160,10 @@ typedef enum __MSP1_ADC_CHANNEL__
 
 /** DAC code ceiling, left at the hardware maximum (4095): the actual
  *  enforcement is the runtime power/current check in tMsp1_measureHeater(),
- *  not a static ceiling. Every DAC write hard-clamps above this value.
+ *  not a static ceiling. Every DAC write above this value is rejected.
  *  For reference, exactly MSP1_HEATER_MAX_POWER_MW at the nominal heater
- *  resistance would be V_DRIVE = 116 × sqrt(0.050/66) = 3.193 V →
- *  DAC = floor(3193.0 / 3300 × 4095) = 3961. */
+ *  resistance would be V_DRIVE = 116 × sqrt(0.050/66) = 3.1928 V →
+ *  DAC = floor(3192.8 / 3300 × 4096) = 3962. */
 #define MSP1_DAC_MAX_SAFE            (4095U)
 
 /** Nominal heater power (mW) — target of the open-loop soft-start ramp: the
@@ -180,20 +185,20 @@ typedef enum __MSP1_ADC_CHANNEL__
 
 /** Minimum spacing (ms) between successive tMsp1_heaterControlStep() calls,
  *  enforced with vTaskDelay() at the end of the function — applies to every
- *  call site (continuous servicing in SYS_STATE_WAIT_FOR_TIMEOUT, the
+ *  call site (the loop()-top service in every measurement-cycle state, the
  *  pre-BME680 top-up, and the retry loop in SYS_STATE_READ_SENSORS) so the
  *  control loop never runs faster than this, independent of how often the
  *  caller invokes it. Gives each correction time to actually show up in the
- *  next NAU7802 reading (~100 ms at 10 SPS) before another PI step reacts. */
+ *  next NAU7802 reading (~100 ms at 10 SPS) before another step reacts. */
 #define MSP1_HEATER_CONTROL_LOOP_DELAY_MS (300U)
 
 /** Number of geometric open-loop ramp steps used to bring the heater DAC
- *  quickly from 0 toward a new target before handing off to the PI loop.
+ *  quickly from 0 toward a new target before handing off to the closed loop.
  *  Each step covers 1/MSP1_HEATER_RAMP_DIVISOR of the *remaining* gap to the
  *  target, so the rise is large and fast at first and decelerates as it
  *  nears the target — never a single instantaneous jump, and never
  *  approached from above. Final convergence and steady-state hold are left
- *  to tMsp1_heaterControlStep()'s PI action. */
+ *  to tMsp1_heaterControlStep()'s closed-loop law. */
 #define MSP1_HEATER_RAMP_STEPS        (8U)
 
 /** Divisor applied to the remaining DAC gap at each ramp step (2 = halving
@@ -216,7 +221,8 @@ typedef enum __MSP1_ADC_CHANNEL__
 
 /* ---- NO2 sensor bias-network constants ---- */
 
-/** Feedback network GAIN */
+/** CH0 voltage → Rno2 scale: Rno2 [Ω] = V_diff [mV] × this / 1000, i.e. the
+ *  inverse of the sensor bias current (20000 = 1 / 50 µA). */
 #define MSP1_NO2_GAIN_OHM              (20000.0f)
 
 /**
@@ -263,7 +269,7 @@ typedef enum __MSP1_ADC_CHANNEL__
 #define MSP1_HEATER_TAMB_REF_MAX_C       (85.0f)
 
 /** CH0/CH1 display sliding-window depth. The ring averages are recomputed on
- *  EVERY new CH0 sample (~one wait-loop giro, ~2 s); this only sets how many
+ *  EVERY new CH0 sample (~one loop() pass, ~2.5 s); this only sets how many
  *  samples each average spans — deeper = smoother but slower to track
  *  changes. */
 #define MSP1_DISPLAY_AVG_SAMPLES         (5U)
@@ -271,7 +277,7 @@ typedef enum __MSP1_ADC_CHANNEL__
 /* ---- data structures ---- */
 
 /**
- * @brief Accumulated sensor readings from NAU7802 CH1 (MICS-2714 output).
+ * @brief Accumulated sensor readings from NAU7802 CH0 (MICS-2714 output).
  */
 typedef struct __MSP1_SENSOR_DATA__
 {
@@ -292,15 +298,15 @@ typedef struct __MSP1_SENSOR_DATA__
  */
 typedef struct __MSP1_NO2_DATA__
 {
-  float vDiff_mV;            /**< Averaged differential voltage from CH1 (mV)    */
+  float vDiff_mV;            /**< Averaged differential voltage from CH0 (mV)    */
   float rno2_ohm;            /**< Derived sensor resistance Rno2 (Ω)             */
   bool  dataReady;           /**< true after tMsp1_computeRno2() is called       */
 } msp1No2Data_t;
 
 /**
- * @brief Heater state derived from NAU7802 CH2 (DRIVE−HEAT) and the DAC output.
+ * @brief Heater state derived from NAU7802 CH1 (DRIVE−HEAT) and the DAC output.
  *
- *   V_R14   = V_CH2                           (drop across R14, measured by CH2)
+ *   V_R14   = V_CH1                           (drop across R14, measured by CH1)
  *   V_DRIVE = dacSetpoint / 4096 × VDD_DAC    (from DAC setpoint)
  *   I_heat  = V_R14 / R14                     (mA)
  *   V_heat  = V_DRIVE − V_R14                 (mV)
@@ -309,7 +315,7 @@ typedef struct __MSP1_NO2_DATA__
  */
 typedef struct __MSP1_HEATER_DATA__
 {
-  float    vR14_mV;            /**< Voltage across R14 measured by CH2, high-side (mV) */
+  float    vR14_mV;            /**< Voltage across R14 measured by CH1, high-side (mV) */
   float    vHeater_mV;         /**< Voltage across the heater: V_DRIVE − V_R14 (mV)    */
   float    current_mA;         /**< Heater current I = V_R14 / R14 (mA)                */
   float    rHeat_ohm;          /**< Measured heater resistance V_heat / I (Ω) — the
@@ -325,8 +331,8 @@ typedef struct __MSP1_HEATER_DATA__
  */
 typedef struct __MSP1_DATA__
 {
-  msp1SensorData_t sensor;       /**< CH1 gas sensor accumulation state          */
-  msp1No2Data_t    no2;          /**< Derived NO2 concentration quantities       */
+  msp1SensorData_t sensor;       /**< CH0 gas sensor accumulation state          */
+  msp1No2Data_t    no2;          /**< Derived Rno2 quantities                    */
   msp1HeaterData_t heater;       /**< Heater measurement and control state       */
   bool             nau7802Ready; /**< true when NAU7802 is initialised           */
   bool             mcp4725Ready; /**< true when MCP4725 is initialised           */
@@ -368,16 +374,18 @@ typedef struct __MSP1_CONFIG__
 /* ---- public API ---- */
 
 /*****************************************************************************
- * @brief Initialise both NAU7802 (GAIN=1, 10 SPS) and MCP4725 (output=0)
- *        over I2C.  Must be called before any other function in this module.
+ * @brief Initialise MCP4725 (output=0) and NAU7802 (GAIN=1, 10 SPS, zero
+ *        calibration of CH1, and of CH0 when MSP1_CH0_PGA=1) over I2C, in
+ *        that order.  Must be called
+ *        before any other function in this module except tMsp1_setConfig().
  *
  * @return mspStatus_t STATUS_OK if both ready, STATUS_ERR otherwise.
  *****************************************************************************/
 mspStatus_t tMsp1_init(void);
 
 /*****************************************************************************
- * @brief Override the runtime-configurable MSP1 parameters (r0No2_ohm,
- *        rheatTempMaxC, rheatTambOhm, rheatTambRefC, krOhmPerC, ldoIndex).
+ * @brief Override the runtime-configurable MSP1 parameters (every
+ *        msp1Config_t field).
  *        Immediately affects the heater control target: s_getRHeatEffective()
  *        (in msp1.cpp) recomputes R@Tmax from
  *        rheatTambOhm/rheatTambRefC/rheatTempMaxC/krOhmPerC on every call, so
@@ -389,9 +397,12 @@ mspStatus_t tMsp1_init(void);
  *        invalid one: rheatTambRefC outside
  *        [MSP1_HEATER_TAMB_REF_MIN_C, MSP1_HEATER_TAMB_REF_MAX_C] or not
  *        below rheatTempMaxC, ldoIndex above MSP1_LDO_INDEX_EXTERNAL,
- *        avddExt_mV / dacVdd_mV outside their MSP1_*_MIN/MAX_MV ranges.
+ *        avddExt_mV / dacVdd_mV outside their MSP1_*_MIN/MAX_MV ranges,
+ *        rampStepDelayMs above MSP1_HEATER_RAMP_DELAY_MAX_MS.
  *
  *        Safe to call before tMsp1_init(); does not touch the DAC or ADC.
+ *        ldoIndex reaches the hardware only through the setLDO() call in
+ *        tMsp1_init(), while raw→mV conversions use it immediately.
  *
  * @param cfg  Values to apply; must not be NULL.
  *****************************************************************************/
@@ -405,13 +416,15 @@ void tMsp1_setConfig(const msp1Config_t *cfg);
  *****************************************************************************/
 void tMsp1_getConfig(msp1Config_t *out);
 
-/* -- sensor CH1: accumulation --------------------------------------------- */
+/* -- sensor CH0: accumulation --------------------------------------------- */
 
 /*****************************************************************************
- * @brief Read one raw sample from NAU7802 CH1 and add it to the running
+ * @brief Read one raw sample from NAU7802 CH0 and add it to the running
  *        accumulator. Waits (bounded) for the conversion to be ready.
  *
- *        Negative differential values are clamped to zero.
+ *        The accumulator takes the sample unclamped (the zero floor is
+ *        applied to the average in tMsp1_computeSensorAverage()); the display
+ *        ring gets it floored at zero.
  *
  * @return mspStatus_t STATUS_OK when a sample was successfully accumulated,
  *         STATUS_ERR on conversion timeout or ADC not initialised.
@@ -421,10 +434,11 @@ mspStatus_t tMsp1_accumulateSensor(void);
 /*****************************************************************************
  * @brief Compute the averaged sensor voltage from the accumulated samples,
  *        store it in sensor.avgVoltage_mV and set sensor.dataReady, then
- *        reset the accumulator for the next integration window.
+ *        reset the accumulator for the next integration window. The average
+ *        is floored at zero.
  *
- *        Call when sensor.sampleCount has reached the desired integration
- *        target (e.g. 36 000 for a 1-hour window at 10 SPS).
+ *        Called once per transmission window (SYS_STATE_SEND_DATA); the
+ *        accumulator collects one sample per serviced loop() pass.
  *
  * @return mspStatus_t STATUS_ERR if no samples have been accumulated yet.
  *****************************************************************************/
@@ -462,7 +476,7 @@ mspStatus_t tMsp1_computeRno2(void);
  *        MSP1_DISPLAY_AVG_SAMPLES CH0 samples, i.e. a live preview that does
  *        not depend on no2.rno2_ohm having been finalised by a transmission
  *        window. Settling time is fixed at ~MSP1_DISPLAY_AVG_SAMPLES
- *        wait-loop giri (~12 s), independent of the measurement period.
+ *        loop() passes (~12 s), independent of the measurement period.
  *
  * @param out_rno2_ohm  Receives the ring-averaged Rno2 (Ω); untouched on error.
  * @return mspStatus_t STATUS_ERR until the ring holds at least one sample.
@@ -481,10 +495,10 @@ mspStatus_t tMsp1_peekRno2Ring(float *out_rno2_ohm);
  *****************************************************************************/
 mspStatus_t tMsp1_peekRno2Ratio(float *out_ratio);
 
-/* -- heater CH2 + DAC ----------------------------------------------------- */
+/* -- heater CH1 + DAC ----------------------------------------------------- */
 
 /*****************************************************************************
- * @brief Read one sample from NAU7802 CH2 (DRIVE−HEAT) and update all
+ * @brief Read one sample from NAU7802 CH1 (DRIVE−HEAT) and update all
  *        heater-derived quantities (V_R14, V_heat, I, R_heat, P). Waits
  *        (bounded) for the conversion to be ready.
  *

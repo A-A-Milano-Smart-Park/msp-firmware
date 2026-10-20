@@ -618,7 +618,7 @@ void vHalDisplay_drawMsp1HeaterDacData(sensorData_t *p_tData, systemStatus_t *st
   // Ring-buffer averaged V_R14/current for heater channel CH1 and MCP4725 DAC setpoint
   msp1Config_t tMsp1Cfg;
   tMsp1_getConfig(&tMsp1Cfg);
-  const float fVdac_mV = ((float)p_tMsp1->heater.dacSetpoint / (float)MSP1_DAC_MAX_VALUE) * tMsp1Cfg.dacVdd_mV;
+  const float fVdac_mV = ((float)p_tMsp1->heater.dacSetpoint / (float)MSP1_DAC_STEPS) * tMsp1Cfg.dacVdd_mV;
   vHal_displayDrawScrHead(statPtr, devinfoPtr);
   u8g2.setCursor(MEAS_DISP_X_OFFSET, MEAS_DISP_Y_OFFSET_L1);
   u8g2.print("Heater (CH1)/DAC");
