@@ -16,7 +16,8 @@ LIBRARIES := \
 	SSLClient@1.6.11 \
 	U8g2@2.34.22 \
 	TinyGSM@0.11.7 \
-	ArduinoJson@7.4.2
+	ArduinoJson@7.4.2 \
+	"Adafruit BusIO"@1.17.4
 LIBRARIES_URLS := \
 	https://github.com/A-A-Milano-Smart-Park/MiCS6814-I2C-MOD-Library \
 	https://github.com/DFRobot/DFRobot_MICS \
