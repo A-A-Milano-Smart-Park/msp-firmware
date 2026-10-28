@@ -2,8 +2,6 @@
 
 A&A Milano Smart Park Project
 
-Firmware developed with the Arduino IDE v2 by Norman Mulinacci @ 2023
-
 The project runs on Espressif's ESP32-DevkitC with ESP32-WROVER-B module
 
 ## Building and flashing from source (using the Arduino IDE):
