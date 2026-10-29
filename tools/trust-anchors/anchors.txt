@@ -1,0 +1,12 @@
+# Root CAs compiled into trust_anchor.h, in index order.
+# Format: <file in roots/> | <what the root is used for>
+# After editing, regenerate the header with: python3 tools/trust-anchors/generate.py
+# The same roots/ bundle is used by milanosmartpark-infra to check that the
+# server certificate chains to a root the devices trust.
+usertrust-rsa.pem | milanosmartpark.info, current Sectigo chain (via cross-signed Root R46)
+comodo-aaa.pem    | www.github.com
+isrg-root-x1.pem  | Let's Encrypt RSA chains (via cross-signed Root YR)
+isrg-root-x2.pem  | Let's Encrypt ECDSA chains (via cross-signed Root YE)
+sectigo-r46.pem   | Sectigo chain when the server omits the cross-signed Root R46
+isrg-root-yr.pem  | Let's Encrypt RSA chains when the server omits the cross-signed Root YR
+isrg-root-ye.pem  | Let's Encrypt ECDSA chains when the server omits the cross-signed Root YE
