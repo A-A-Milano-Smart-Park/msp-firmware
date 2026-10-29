@@ -13,6 +13,8 @@ jobs:
         run: make env
       - name: Lint the sketch
         run: make lint
+      - name: Check trust_anchor.h matches tools/trust-anchors
+        run: pip3 install cryptography && python3 tools/trust-anchors/generate.py --check
   build:
     runs-on: ubuntu-22.04
     steps:
